@@ -6,17 +6,11 @@ include $(THEOS)/makefiles/common.mk
 
 TWEAK_NAME = Spork
 
-Spork_FILES = Tweak.xm SporkUI.mm Executor.mm
+# SporkUI.mm is used, but it's pure Objective-C code now
+Spork_FILES = Tweak.xm SporkUI.mm
 
-# Flags for pure Objective-C files
+# Basic flags for Objective-C
 Spork_OBJCFLAGS = -fobjc-arc
-
-# Include paths for the Compiler and VM (headers only)
-Spork_OBJCCFLAGS = -fobjc-arc -std=c++17 -Wno-error=c++17-extensions -I$(THEOS_PROJECT_DIR) -I$(THEOS_PROJECT_DIR)/luau/Ast/include -I$(THEOS_PROJECT_DIR)/luau/Common/include -I$(THEOS_PROJECT_DIR)/luau/Compiler/include -I$(THEOS_PROJECT_DIR)/luau/Bytecode/include -I$(THEOS_PROJECT_DIR)/luau/VM/include
-
-Spork_LIBRARIES = substrate
-
-# Link ONLY the compiler libraries. NO VM.
-Spork_LDFLAGS = -Wl,-undefined,dynamic_lookup $(THEOS_PROJECT_DIR)/libLuau.Compiler.a $(THEOS_PROJECT_DIR)/libLuau.Ast.a $(THEOS_PROJECT_DIR)/libLuau.Bytecode.a $(THEOS_PROJECT_DIR)/libLuau.Common.a
+Spork_OBJCCFLAGS = -fobjc-arc
 
 include $(THEOS_MAKE_PATH)/tweak.mk
