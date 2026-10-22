@@ -1,22 +1,14 @@
 #import "SporkUI.h"
 
-// --- Pass-Through View (Allows Roblox interaction outside the menu) ---
+// --- Pass-Through View ---
 @interface PassThroughView : UIView
-@property (nonatomic, weak) UIView *interactableView1; // mainContainer
-@property (nonatomic, weak) UIView *interactableView2; // floatingButton
 @end
 @implementation PassThroughView
 - (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
     UIView *hitView = [super hitTest:point withEvent:event];
+    // If the touch is on the empty background, pass it through to the window (which passes to Roblox)
     if (hitView == self) {
-        // Check if touch is on the menu or floating button
-        CGPoint point1 = [self.interactableView1 convertPoint:point fromView:self];
-        if (!self.interactableView1.hidden && [self.interactableView1 pointInside:point1 withEvent:event]) return hitView;
-        
-        CGPoint point2 = [self.interactableView2 convertPoint:point fromView:self];
-        if (!self.interactableView2.hidden && [self.interactableView2 pointInside:point2 withEvent:event]) return hitView;
-        
-        return nil; // Pass touch to Roblox
+        return nil; 
     }
     return hitView;
 }
@@ -88,9 +80,6 @@
     [self setupHomeTab];
     [self setupHacksTab];
     [self setupFloatingButton];
-    
-    self.rootView.interactableView1 = self.mainContainer;
-    self.rootView.interactableView2 = self.floatingButton;
     
     [self switchTab:3]; // Start on Editor
 }
@@ -318,7 +307,6 @@
         btn.backgroundColor = (i == 0) ? [UIColor colorWithRed:0.0 green:0.5 blue:1.0 alpha:1.0] : [UIColor colorWithWhite:0.2 alpha:1.0];
         btn.layer.cornerRadius = 6;
         
-        // Add actions for buttons
         if (i == 1) [btn addTarget:self action:@selector(clearAction) forControlEvents:UIControlEventTouchUpInside];
         if (i == 2) [btn addTarget:self action:@selector(copyAction) forControlEvents:UIControlEventTouchUpInside];
         if (i == 3) [btn addTarget:self action:@selector(pasteAction) forControlEvents:UIControlEventTouchUpInside];
@@ -458,17 +446,20 @@
 
 - (void)setupFloatingButton {
     self.floatingButton = [SporkButton buttonWithType:UIButtonTypeSystem];
-    self.floatingButton.frame = CGRectMake(100, 100, 50, 50); // Initial position
-    self.floatingButton.backgroundColor = [UIColor colorWithRed:0.1 green:0.1 blue:0.1 alpha:0.9];
-    self.floatingButton.layer.cornerRadius = 25;
-    self.floatingButton.layer.borderWidth = 1;
-    self.floatingButton.layer.borderColor = [UIColor colorWithWhite:0.3 alpha:1.0].CGColor;
-    [self.floatingButton setImage:[UIImage systemImageNamed:@"hare.fill"] forState:UIControlStateNormal];
+    self.floatingButton.frame = CGRectMake(100, 100, 60, 60);
+    
+    // REMOVED THE BACKGROUND AND BORDER
+    self.floatingButton.backgroundColor = [UIColor clearColor]; 
+    self.floatingButton.layer.borderWidth = 0;
+    
+    // Made the icon slightly bigger so it's easy to tap without a background
+    UIImageSymbolConfiguration *config = [UIImageSymbolConfiguration configurationWithPointSize:30 weight:UIImageSymbolWeightBold];
+    [self.floatingButton setImage:[UIImage systemImageNamed:@"hare.fill" withConfiguration:config] forState:UIControlStateNormal];
     [self.floatingButton setTintColor:[UIColor whiteColor]];
+    
     self.floatingButton.hidden = YES;
     [self.view addSubview:self.floatingButton];
     
-    // Drag gesture for floating button
     UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handleFloatPan:)];
     [self.floatingButton addGestureRecognizer:pan];
     
@@ -498,7 +489,6 @@
     } completion:nil];
 }
 
-// Button Actions
 - (void)copyAction {
     if (self.scriptEditor.text.length > 0) {
         [UIPasteboard generalPasteboard].string = self.scriptEditor.text;
@@ -545,7 +535,6 @@
     self.mainContainer.transform = CGAffineTransformMakeScale(0.1, 0.1);
     self.mainContainer.alpha = 0;
     
-    // Size-up with massive recoil
     [UIView animateWithDuration:0.6 delay:0 usingSpringWithDamping:0.4 initialSpringVelocity:1.5 options:UIViewAnimationOptionAllowUserInteraction animations:^{
         self.mainContainer.transform = CGAffineTransformIdentity;
         self.mainContainer.alpha = 1;
@@ -566,18 +555,12 @@
     
     CGPoint newCenter = CGPointMake(self.mainContainer.center.x + translation.x, self.mainContainer.center.y + translation.y);
     
-    // Smooth follow (less sticky) with dynamic squish based on speed
     CGFloat speed = sqrt(velocity.x*velocity.x + velocity.y*velocity.y);
     CGFloat scale = 1.0;
-    if (speed > 1000) {
-        scale = 0.92; // Stretch/squish heavily on fast drags
-    } else if (speed > 300) {
-        scale = 0.94;
-    } else {
-        scale = 0.96;
-    }
+    if (speed > 1000) scale = 0.92;
+    else if (speed > 300) scale = 0.94;
+    else scale = 0.96;
     
-    // Using a short animation makes it smoothly trail the finger instead of being locked 1:1
     [UIView animateWithDuration:0.08 delay:0 options:UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionCurveEaseOut animations:^{
         self.mainContainer.center = newCenter;
         self.mainContainer.transform = CGAffineTransformMakeScale(scale, scale);
@@ -586,7 +569,6 @@
     [sender setTranslation:CGPointZero inView:self.view];
     
     if (sender.state == UIGestureRecognizerStateEnded || sender.state == UIGestureRecognizerStateCancelled) {
-        // Smooth jelly recoil when letting go
         [UIView animateWithDuration:0.6 delay:0 usingSpringWithDamping:0.35 initialSpringVelocity:speed/1000.0 options:UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionBeginFromCurrentState animations:^{
             self.mainContainer.transform = CGAffineTransformIdentity;
         } completion:nil];
