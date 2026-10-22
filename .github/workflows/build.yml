@@ -21,8 +21,8 @@ jobs:
           cd luau
           # Create a build directory for CMake
           mkdir build_ios && cd build_ios
-          # Configure CMake for iOS ARM64
-          cmake .. -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_BUILD_TYPE=Release -DLUAU_BUILD_CLI=OFF
+          # Configure CMake for iOS ARM64 and DISABLE TESTS
+          cmake .. -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_BUILD_TYPE=Release -DLUAU_BUILD_CLI=OFF -DLUAU_BUILD_TESTS=OFF
           # Build the static libraries (Luau.Compiler and Luau.VM)
           make -j$(sysctl -n hw.ncpu)
           # Copy the .a files to the Theos project root for linking
