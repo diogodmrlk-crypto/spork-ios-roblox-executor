@@ -1,8 +1,4 @@
 #import "SporkUI.h"
-#import "Executor.hpp"
-
-// Declare the manual hook function
-extern "C" void injectHook();
 
 // --- Custom Button for Squish Effect ---
 @interface SporkButton : UIButton
@@ -332,17 +328,6 @@ extern "C" void injectHook();
     progressFill.layer.cornerRadius = 6;
     [progressBg addSubview:progressFill];
 
-    // ADDED: Manual Inject Button
-    SporkButton *injectBtn = [SporkButton buttonWithType:UIButtonTypeSystem];
-    [injectBtn setTitle:@"INJECT HOOK" forState:UIControlStateNormal];
-    injectBtn.translatesAutoresizingMaskIntoConstraints = NO;
-    [injectBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    injectBtn.backgroundColor = [UIColor redColor];
-    injectBtn.layer.cornerRadius = 6;
-    injectBtn.titleLabel.font = [UIFont boldSystemFontOfSize:14];
-    [injectBtn addTarget:self action:@selector(injectAction) forControlEvents:UIControlEventTouchUpInside];
-    [self.homeTabView addSubview:injectBtn];
-
     [NSLayoutConstraint activateConstraints:@[
         [self.homeTabView.topAnchor constraintEqualToAnchor:self.contentContainer.topAnchor constant:15],
         [self.homeTabView.leadingAnchor constraintEqualToAnchor:self.contentContainer.leadingAnchor constant:15],
@@ -357,13 +342,7 @@ extern "C" void injectHook();
         [progressFill.leadingAnchor constraintEqualToAnchor:progressBg.leadingAnchor],
         [progressFill.topAnchor constraintEqualToAnchor:progressBg.topAnchor],
         [progressFill.bottomAnchor constraintEqualToAnchor:progressBg.bottomAnchor],
-        [progressFill.widthAnchor constraintEqualToAnchor:progressBg.widthAnchor multiplier:0.7],
-        
-        // Constraints for Inject Button
-        [injectBtn.topAnchor constraintEqualToAnchor:progressBg.bottomAnchor constant:30],
-        [injectBtn.centerXAnchor constraintEqualToAnchor:self.homeTabView.centerXAnchor],
-        [injectBtn.widthAnchor constraintEqualToConstant:200],
-        [injectBtn.heightAnchor constraintEqualToConstant:40]
+        [progressFill.widthAnchor constraintEqualToAnchor:progressBg.widthAnchor multiplier:0.7]
     ]];
 }
 
@@ -453,27 +432,10 @@ extern "C" void injectHook();
     } completion:nil];
 }
 
-// ADDED: Method to call the manual hook
-- (void)injectAction {
-    injectHook();
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Injector" message:@"Hook attempted! If the app didn't crash, wait for a game to load." preferredStyle:UIAlertControllerStyleAlert];
+- (void)executeScriptAction {
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Spork" message:@"Luau execution is currently disabled. The UI is stable!" preferredStyle:UIAlertControllerStyleAlert];
     [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
     [self presentViewController:alert animated:YES completion:nil];
-}
-
-- (void)executeScriptAction {
-    if (self.scriptEditor.text.length > 0) {
-        std::string sourceCode = [self.scriptEditor.text UTF8String];
-        
-        if (SporkExecutor::QueueScript(sourceCode)) {
-            NSLog(@"[Spork UI] Script queued successfully.");
-        } else {
-            NSLog(@"[Spork UI] Failed to queue script. State not captured yet.");
-            UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Executor" message:@"Not ready. Wait for a game to fully load." preferredStyle:UIAlertControllerStyleAlert];
-            [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
-            [self presentViewController:alert animated:YES completion:nil];
-        }
-    }
 }
 
 - (void)copyAction {
