@@ -1,7 +1,21 @@
 #import <UIKit/UIKit.h>
 #import "SporkUI.h"
 
-static UIWindow *overlayWindow = nil;
+// --- Pass-Through Window (Fixes Roblox interaction) ---
+@interface PassThroughWindow : UIWindow
+@end
+@implementation PassThroughWindow
+- (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
+    UIView *hitView = [super hitTest:point withEvent:event];
+    // If the touch hits the window itself (the empty space), ignore it and pass to Roblox
+    if (hitView == self) {
+        return nil;
+    }
+    return hitView;
+}
+@end
+
+static PassThroughWindow *overlayWindow = nil;
 
 __attribute__((constructor))
 static void init() {
@@ -17,9 +31,9 @@ static void init() {
         }
 
         if (activeScene) {
-            overlayWindow = [[UIWindow alloc] initWithWindowScene:activeScene];
+            overlayWindow = [[PassThroughWindow alloc] initWithWindowScene:activeScene];
         } else {
-            overlayWindow = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
+            overlayWindow = [[PassThroughWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
         }
 
         overlayWindow.frame = [UIScreen mainScreen].bounds;
