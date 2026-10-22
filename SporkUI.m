@@ -27,19 +27,17 @@
 // --- Main View Controller ---
 @interface SporkViewController ()
 @property (nonatomic, strong, readwrite) UIView *mainContainer;
-@property (nonatomic, strong, readwrite) SporkButton *floatingButton;
+@property (nonatomic, strong, readwrite) UIButton *floatingButton;
 @property (nonatomic, strong) UIView *topBar;
 @property (nonatomic, strong) UIView *contentContainer;
 @property (nonatomic, strong) UIView *sidebar;
 @property (nonatomic, strong) UIView *selectionIndicator;
 @property (nonatomic, strong) NSArray *sidebarButtons;
 
-// Tabs
 @property (nonatomic, strong) UIView *editorTabView;
 @property (nonatomic, strong) UIView *homeTabView;
 @property (nonatomic, strong) UIView *hacksTabView;
 
-// Editor Elements
 @property (nonatomic, strong) UITextView *scriptEditor;
 @property (nonatomic, strong) UILabel *tabLabel;
 @property (nonatomic) NSInteger tabCounter;
@@ -59,7 +57,7 @@
     [self setupHacksTab];
     [self setupFloatingButton];
     
-    [self switchTab:3]; // Start on Editor
+    [self switchTab:3];
 }
 
 #pragma mark - Setup UI
@@ -423,25 +421,25 @@
 #pragma mark - Floating Button
 
 - (void)setupFloatingButton {
-    self.floatingButton = [SporkButton buttonWithType:UIButtonTypeSystem];
-    self.floatingButton.frame = CGRectMake(100, 100, 60, 60);
+    SporkButton *btn = [SporkButton buttonWithType:UIButtonTypeSystem];
+    btn.frame = CGRectMake(100, 100, 60, 60);
     
-    // REMOVED THE BACKGROUND AND BORDER
-    self.floatingButton.backgroundColor = [UIColor clearColor]; 
-    self.floatingButton.layer.borderWidth = 0;
+    btn.backgroundColor = [UIColor clearColor]; 
+    btn.layer.borderWidth = 0;
     
-    // Made the icon slightly bigger so it's easy to tap without a background
     UIImageSymbolConfiguration *config = [UIImageSymbolConfiguration configurationWithPointSize:30 weight:UIImageSymbolWeightBold];
-    [self.floatingButton setImage:[UIImage systemImageNamed:@"hare.fill" withConfiguration:config] forState:UIControlStateNormal];
-    [self.floatingButton setTintColor:[UIColor whiteColor]];
+    [btn setImage:[UIImage systemImageNamed:@"hare.fill" withConfiguration:config] forState:UIControlStateNormal];
+    [btn setTintColor:[UIColor whiteColor]];
     
-    self.floatingButton.hidden = YES;
-    [self.view addSubview:self.floatingButton];
+    btn.hidden = YES;
+    [self.view addSubview:btn];
     
     UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handleFloatPan:)];
-    [self.floatingButton addGestureRecognizer:pan];
+    [btn addGestureRecognizer:pan];
     
-    [self.floatingButton addTarget:self action:@selector(restoreMenu) forControlEvents:UIControlEventTouchUpInside];
+    [btn addTarget:self action:@selector(restoreMenu) forControlEvents:UIControlEventTouchUpInside];
+    
+    self.floatingButton = btn;
 }
 
 #pragma mark - Actions
