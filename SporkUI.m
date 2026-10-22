@@ -34,6 +34,10 @@
 @property (nonatomic, strong) UIView *selectionIndicator;
 @property (nonatomic, strong) NSArray *sidebarButtons;
 
+// Constraints for dragging
+@property (nonatomic, strong) NSLayoutConstraint *centerXConstraint;
+@property (nonatomic, strong) NSLayoutConstraint *centerYConstraint;
+
 @property (nonatomic, strong) UIView *editorTabView;
 @property (nonatomic, strong) UIView *homeTabView;
 @property (nonatomic, strong) UIView *hacksTabView;
@@ -80,9 +84,13 @@
     NSLayoutConstraint *heightConstraint = [self.mainContainer.heightAnchor constraintEqualToConstant:400];
     heightConstraint.priority = UILayoutPriorityDefaultHigh;
 
+    // Store the center constraints so we can modify them during drag
+    self.centerXConstraint = [self.mainContainer.centerXAnchor constraintEqualToAnchor:self.view.centerXAnchor];
+    self.centerYConstraint = [self.mainContainer.centerYAnchor constraintEqualToAnchor:self.view.centerYAnchor];
+
     [NSLayoutConstraint activateConstraints:@[
-        [self.mainContainer.centerXAnchor constraintEqualToAnchor:self.view.centerXAnchor],
-        [self.mainContainer.centerYAnchor constraintEqualToAnchor:self.view.centerYAnchor],
+        self.centerXConstraint,
+        self.centerYConstraint,
         widthConstraint,
         [self.mainContainer.widthAnchor constraintLessThanOrEqualToAnchor:self.view.widthAnchor multiplier:0.95],
         heightConstraint,
@@ -529,7 +537,10 @@
         } completion:nil];
     }
     
-    CGPoint newCenter = CGPointMake(self.mainContainer.center.x + translation.x, self.mainContainer.center.y + translation.y);
+    // Update the constraints instead of the center property
+    self.centerXConstraint.constant += translation.x;
+    self.centerYConstraint.constant += translation.y;
+    [sender setTranslation:CGPointZero inView:self.view];
     
     CGFloat speed = sqrt(velocity.x*velocity.x + velocity.y*velocity.y);
     CGFloat scale = 1.0;
@@ -538,11 +549,9 @@
     else scale = 0.96;
     
     [UIView animateWithDuration:0.08 delay:0 options:UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionCurveEaseOut animations:^{
-        self.mainContainer.center = newCenter;
         self.mainContainer.transform = CGAffineTransformMakeScale(scale, scale);
+        [self.view layoutIfNeeded]; // Force layout update immediately for smooth dragging
     } completion:nil];
-    
-    [sender setTranslation:CGPointZero inView:self.view];
     
     if (sender.state == UIGestureRecognizerStateEnded || sender.state == UIGestureRecognizerStateCancelled) {
         [UIView animateWithDuration:0.6 delay:0 usingSpringWithDamping:0.35 initialSpringVelocity:speed/1000.0 options:UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionBeginFromCurrentState animations:^{
