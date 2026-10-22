@@ -26,13 +26,12 @@
     self.mainContainer.layer.borderWidth = 1;
     self.mainContainer.layer.borderColor = [UIColor colorWithWhite:0.3 alpha:1.0].CGColor;
     self.mainContainer.layer.shadowColor = [UIColor blackColor].CGColor;
-    self.mainContainer.layer.shadowOpacity = 0.5;
-    self.mainContainer.layer.shadowRadius = 10;
+    self.mainContainer.layer.shadowOpacity = 0.8;
+    self.mainContainer.layer.shadowRadius = 15;
     [self.view addSubview:self.mainContainer];
 
-    // Safely constrain the size so it doesn't break on smaller/larger screens
     NSLayoutConstraint *widthConstraint = [self.mainContainer.widthAnchor constraintEqualToConstant:600];
-    widthConstraint.priority = UILayoutPriorityDefaultHigh; // Allows it to shrink if screen is too small
+    widthConstraint.priority = UILayoutPriorityDefaultHigh;
 
     NSLayoutConstraint *heightConstraint = [self.mainContainer.heightAnchor constraintEqualToConstant:350];
     heightConstraint.priority = UILayoutPriorityDefaultHigh;
@@ -55,7 +54,6 @@
     topBar.layer.maskedCorners = kCALayerMinXMinYCorner | kCALayerMaxXMinYCorner;
     [self.mainContainer addSubview:topBar];
 
-    // Logo / Title
     UILabel *title = [[UILabel alloc] init];
     title.translatesAutoresizingMaskIntoConstraints = NO;
     title.text = @"Spork";
@@ -63,7 +61,6 @@
     title.font = [UIFont boldSystemFontOfSize:16];
     [topBar addSubview:title];
 
-    // NEO Badge
     UILabel *neoBadge = [[UILabel alloc] init];
     neoBadge.translatesAutoresizingMaskIntoConstraints = NO;
     neoBadge.text = @" NEO ";
@@ -74,7 +71,6 @@
     neoBadge.clipsToBounds = YES;
     [topBar addSubview:neoBadge];
 
-    // Executor Text
     UILabel *execText = [[UILabel alloc] init];
     execText.translatesAutoresizingMaskIntoConstraints = NO;
     execText.text = @"Executor & Scripts Handler";
@@ -82,7 +78,6 @@
     execText.font = [UIFont systemFontOfSize:10];
     [topBar addSubview:execText];
 
-    // Close Button
     UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     closeBtn.translatesAutoresizingMaskIntoConstraints = NO;
     [closeBtn setImage:[UIImage systemImageNamed:@"xmark.circle.fill"] forState:UIControlStateNormal];
@@ -121,7 +116,6 @@
     self.sidebar.layer.maskedCorners = kCALayerMinXMinYCorner | kCALayerMinXMaxYCorner;
     [self.mainContainer addSubview:self.sidebar];
 
-    // Sidebar Icons
     NSArray *icons = @[@"doc.text.fill", @"house.fill", @"bolt.fill", @"chevron.left.forwardslash.chevron.right", @"doc.on.clipboard"];
     UIStackView *stack = [[UIStackView alloc] init];
     stack.translatesAutoresizingMaskIntoConstraints = NO;
@@ -140,7 +134,6 @@
         [stack addArrangedSubview:btn];
     }
 
-    // Selection Indicator (Blue Line)
     self.selectionIndicator = [[UIView alloc] init];
     self.selectionIndicator.translatesAutoresizingMaskIntoConstraints = NO;
     self.selectionIndicator.backgroundColor = [UIColor colorWithRed:0.0 green:0.5 blue:1.0 alpha:1.0];
@@ -163,7 +156,6 @@
 }
 
 - (void)setupEditor {
-    // Tab Header
     UIView *tabHeader = [[UIView alloc] init];
     tabHeader.translatesAutoresizingMaskIntoConstraints = NO;
     tabHeader.backgroundColor = [UIColor colorWithRed:0.15 green:0.15 blue:0.15 alpha:1.0];
@@ -178,7 +170,6 @@
     tabLabel.font = [UIFont systemFontOfSize:12];
     [tabHeader addSubview:tabLabel];
 
-    // Editor Area
     self.scriptEditor = [[UITextView alloc] init];
     self.scriptEditor.translatesAutoresizingMaskIntoConstraints = NO;
     self.scriptEditor.backgroundColor = [UIColor colorWithRed:0.08 green:0.08 blue:0.08 alpha:1.0];
@@ -189,7 +180,6 @@
     self.scriptEditor.layer.maskedCorners = kCALayerMinXMaxYCorner | kCALayerMaxXMaxYCorner;
     [self.mainContainer addSubview:self.scriptEditor];
 
-    // Bottom Action Bar
     UIView *actionBar = [[UIView alloc] init];
     actionBar.translatesAutoresizingMaskIntoConstraints = NO;
     [self.mainContainer addSubview:actionBar];
