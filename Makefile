@@ -12,8 +12,10 @@ Spork_FILES = Tweak.xm SporkUI.m Executor.mm
 Spork_CCFLAGS = -fobjc-arc
 
 # Flags for C++ and Objective-C++ files (Tweak.xm, Executor.mm)
-# Added -Wno-error=c++17-extensions to explicitly stop Theos from failing on the static_assert warning
-Spork_CXXFLAGS = -fobjc-arc -std=c++17 -Wno-error=c++17-extensions -I$(THEOS_PROJECT_DIR) -I$(THEOS_PROJECT_DIR)/luau/Common/include -I$(THEOS_PROJECT_DIR)/luau/Compiler/include -I$(THEOS_PROJECT_DIR)/luau/VM/include
+Spork_CXXFLAGS = -fobjc-arc -std=c++17 -I$(THEOS_PROJECT_DIR) -I$(THEOS_PROJECT_DIR)/luau/Common/include -I$(THEOS_PROJECT_DIR)/luau/Compiler/include -I$(THEOS_PROJECT_DIR)/luau/VM/include
+
+# These flags are appended to the very end of the compiler command to override Theos's default -Werror
+ADDITIONAL_CXXFLAGS = -Wno-c++17-extensions -Wno-error=c++17-extensions
 
 Spork_LIBRARIES = substrate
 Spork_LDFLAGS = $(THEOS_PROJECT_DIR)/libLuau.Compiler.a $(THEOS_PROJECT_DIR)/libLuau.VM.a
