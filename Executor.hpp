@@ -1,7 +1,9 @@
 #pragma once
 #include <string>
 #include <mutex>
-#include "structs.h"
+
+// Use the project directory to find the structs
+#include "structs.h" 
 
 class SporkExecutor {
 public:
