@@ -2,8 +2,9 @@
 #import <substrate.h>
 #import "SporkUI.h"
 #import "Executor.hpp"
+#include "offsets.h"
 
-// --- Pass-Through Window (Fixes Roblox interaction) ---
+// --- Pass-Through Window ---
 @interface PassThroughWindow : UIWindow
 @property (nonatomic, weak) UIView *interactableView1;
 @property (nonatomic, weak) UIView *interactableView2;
@@ -29,23 +30,20 @@ static PassThroughWindow *overlayWindow = nil;
 // Hooked function for luau_load
 static int (*orig_luau_load)(structures::lua_State* L, const char* chunkname, const char* data, size_t size, int env) = nullptr;
 static int hooked_luau_load(structures::lua_State* L, const char* chunkname, const char* data, size_t size, int env) {
-    // 1. Capture the Lua State so the executor can use it
+    // 1. Capture the Lua State
     SporkExecutor::CaptureLuaState(L);
     
-    // 2. Check if the user pressed "Execute" in the UI. 
-    // We process it here because this function fires on the VM thread.
+    // 2. Process any queued scripts from the UI
     SporkExecutor::ProcessQueue();
     
-    // 3. Call the original function so the game doesn't crash
+    // 3. Call the original function
     return orig_luau_load(L, chunkname, data, size, env);
 }
 
 __attribute__((constructor))
 static void init() {
-    // Initialize the Executor (resolves offsets)
     SporkExecutor::Initialize();
     
-    // Setup UI Window
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         if (overlayWindow) return; 
 
