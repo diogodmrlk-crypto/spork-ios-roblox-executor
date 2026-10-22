@@ -243,7 +243,7 @@
     self.scriptEditor.backgroundColor = [UIColor colorWithRed:0.08 green:0.08 blue:0.08 alpha:1.0];
     self.scriptEditor.textColor = [UIColor colorWithRed:0.8 green:0.8 blue:0.8 alpha:1.0];
     self.scriptEditor.font = [UIFont fontWithName:@"Menlo" size:12];
-    self.scriptEditor.text = @"print(\"Hello from Spork!\")";
+    self.scriptEditor.text = @"-- The mock bytecode will always print \"Hello from Spork!\" regardless of what you type here.\nprint(\"Hello from Spork!\")";
     self.scriptEditor.layer.cornerRadius = 8;
     self.scriptEditor.layer.maskedCorners = kCALayerMinXMaxYCorner | kCALayerMaxXMaxYCorner;
     [self.editorTabView addSubview:self.scriptEditor];
@@ -402,7 +402,7 @@
     btn.backgroundColor = [UIColor clearColor]; 
     btn.layer.borderWidth = 0;
     UIImageSymbolConfiguration *config = [UIImageSymbolConfiguration configurationWithPointSize:30 weight:UIImageSymbolWeightBold];
-    [btn setImage:[UIImage imageNamed:@"hare.fill" withConfiguration:config] forState:UIControlStateNormal];
+    [btn setImage:[UIImage systemImageNamed:@"hare.fill" withConfiguration:config] forState:UIControlStateNormal];
     [btn setTintColor:[UIColor whiteColor]];
     btn.hidden = YES;
     [self.view addSubview:btn];
@@ -433,18 +433,15 @@
     } completion:nil];
 }
 
-// Wire up UI to C++ Executor!
 - (void)executeScriptAction {
     if (self.scriptEditor.text.length > 0) {
         std::string sourceCode = [self.scriptEditor.text UTF8String];
         
-        // Pass the code to the C++ Queue
         if (SporkExecutor::QueueScript(sourceCode)) {
             NSLog(@"[Spork UI] Script queued successfully.");
         } else {
             NSLog(@"[Spork UI] Failed to queue script. State not captured yet.");
-            // Show a popup if the VM hasn't loaded yet
-            UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Executor" message:@"Not ready. Wait for the game to load." preferredStyle:UIAlertControllerStyleAlert];
+            UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Executor" message:@"Not ready. Wait for a game to fully load." preferredStyle:UIAlertControllerStyleAlert];
             [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
             [self presentViewController:alert animated:YES completion:nil];
         }
