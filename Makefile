@@ -7,7 +7,8 @@ include $(THEOS)/makefiles/common.mk
 TWEAK_NAME = Spork
 
 Spork_FILES = Tweak.xm SporkUI.m Executor.mm
-Spork_CFLAGS = -fobjc-arc -std=c++17 -I$(THEOS_PROJECT_DIR) -I$(THEOS_PROJECT_DIR)/luau/Common/include -I$(THEOS_PROJECT_DIR)/luau/Compiler/include -I$(THEOS_PROJECT_DIR)/luau/VM/include
+# -I. tells the compiler to look in the current directory
+Spork_CFLAGS = -fobjc-arc -std=c++17 -I. -Iluau/Common/include -Iluau/Compiler/include -Iluau/VM/include
 Spork_LIBRARIES = substrate
 Spork_LDFLAGS = ./libLuau.Compiler.a ./libLuau.VM.a
 
