@@ -6,13 +6,13 @@ include $(THEOS)/makefiles/common.mk
 
 TWEAK_NAME = Spork
 
-Spork_FILES = Tweak.xm SporkUI.m Executor.mm
+# Changed SporkUI.m to SporkUI.mm
+Spork_FILES = Tweak.xm SporkUI.mm Executor.mm
 
-# Flags for pure Objective-C files (SporkUI.m)
+# Flags for pure Objective-C files (if any)
 Spork_OBJCFLAGS = -fobjc-arc
 
-# Flags for Objective-C++ files (Tweak.xm, Executor.mm)
-# Added -Wno-error=c++17-extensions to suppress the static_assert warning
+# Flags for Objective-C++ files (Tweak.xm, SporkUI.mm, Executor.mm)
 Spork_OBJCCFLAGS = -fobjc-arc -std=c++17 -Wno-error=c++17-extensions -I$(THEOS_PROJECT_DIR) -I$(THEOS_PROJECT_DIR)/luau/Common/include -I$(THEOS_PROJECT_DIR)/luau/Compiler/include -I$(THEOS_PROJECT_DIR)/luau/VM/include
 
 Spork_LIBRARIES = substrate
