@@ -9,6 +9,9 @@ TWEAK_NAME = Spork
 # SporkUI.mm is used, but it's pure Objective-C code now
 Spork_FILES = Tweak.xm SporkUI.mm
 
+# Link against substrate for MSHookFunction
+Spork_LIBRARIES = substrate
+
 # Basic flags for Objective-C
 Spork_OBJCFLAGS = -fobjc-arc
 Spork_OBJCCFLAGS = -fobjc-arc
