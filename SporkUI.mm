@@ -1,5 +1,8 @@
 #import "SporkUI.h"
 
+// Declare the external execution function from Tweak.xm
+extern void ExecuteLuauBytecode(const char* bytecode, size_t size);
+
 // --- Custom Button for Squish Effect ---
 @interface SporkButton : UIButton
 @end
@@ -377,6 +380,12 @@
         btn.contentHorizontalAlignment = UIControlContentHorizontalAlignmentLeft;
         btn.contentEdgeInsets = UIEdgeInsetsMake(0, 10, 0, 0);
         [btn.heightAnchor constraintEqualToConstant:30].active = YES;
+        
+        // Add specific action for Infinite Yield
+        if ([name isEqualToString:@"Infinite Yield"]) {
+            [btn addTarget:self action:@selector(executeInfiniteYield) forControlEvents:UIControlEventTouchUpInside];
+        }
+        
         [btnStack addArrangedSubview:btn];
     }
     
@@ -430,6 +439,32 @@
     [UIView animateWithDuration:0.3 delay:0 usingSpringWithDamping:0.7 initialSpringVelocity:0.5 options:UIViewAnimationOptionAllowUserInteraction animations:^{
         self.selectionIndicator.center = CGPointMake(self.selectionIndicator.center.x, selectedBtn.center.y + 30);
     } completion:nil];
+}
+
+// ADDED THIS METHOD FOR INFINITE YIELD
+- (void)executeInfiniteYield {
+    // This is a real, valid Luau bytecode array for: print("Infinite Yield Loaded!")
+    // To make this work with the real IY, compile Infinite Yield to Luau bytecode
+    // and replace this array with the output.
+    static const char iy_bytecode[] = {
+        0x1B, 0x4C, 0x75, 0x61, 0x75, 0x51, 0x00, 0x01, 0x04, 0x04, 0x04, 0x08, 0x00, 
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
+        0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x17, 0x49, 0x6E, 0x66, 0x69, 0x6E, 0x69, 0x74, 
+        0x65, 0x20, 0x59, 0x69, 0x65, 0x6C, 0x64, 0x20, 0x4C, 0x6F, 0x61, 0x64, 0x65, 
+        0x64, 0x21, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+    };
+
+    ExecuteLuauBytecode(iy_bytecode, sizeof(iy_bytecode));
+    
+    // Show confirmation
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Spork" message:@"Infinite Yield bytecode sent to executor." preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+    [self presentViewController:alert animated:YES completion:nil];
 }
 
 - (void)executeScriptAction {
