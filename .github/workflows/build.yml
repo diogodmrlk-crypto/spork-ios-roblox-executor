@@ -20,13 +20,19 @@ jobs:
           cd luau
           mkdir build_ios && cd build_ios
           
-          # Build for BOTH arm64 and arm64e architectures
-          cmake .. -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_ARCHITECTURES="arm64;arm64e" -DCMAKE_BUILD_TYPE=Release -DLUAU_BUILD_CLI=OFF -DLUAU_BUILD_TESTS=OFF
-          
+          # Force the compiler to use iOS 14.0 minimum
+          cmake .. -DCMAKE_SYSTEM_NAME=iOS \
+                   -DCMAKE_OSX_ARCHITECTURES="arm64;arm64e" \
+                   -DCMAKE_C_FLAGS="-mios-version-min=14.0" \
+                   -DCMAKE_CXX_FLAGS="-mios-version-min=14.0" \
+                   -DCMAKE_BUILD_TYPE=Release \
+                   -DLUAU_BUILD_CLI=OFF \
+                   -DLUAU_BUILD_TESTS=OFF
+                   
           make -j$(sysctl -n hw.ncpu)
           
-          # Copy the fat libraries to the project root
-          cp libLuau.Compiler.a libLuau.VM.a libLuau.Ast.a libLuau.Common.a libLuau.Bytecode.a ${{ github.workspace }}/
+          # Copy ONLY the compiler libraries. NO VM.
+          cp libLuau.Compiler.a libLuau.Ast.a libLuau.Common.a libLuau.Bytecode.a ${{ github.workspace }}/
 
       - name: Build Tweak
         run: |
