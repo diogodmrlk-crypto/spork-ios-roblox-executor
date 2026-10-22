@@ -46,11 +46,9 @@ int new_lua_gettop(void* L) {
     return 0;
 }
 
-// ARM64 Pattern Scanner (Fixed string types)
+// ARM64 Pattern Scanner
 uintptr_t find_pattern(const uint8_t* pattern, const char* mask, size_t pattern_len) {
     uintptr_t base = (uintptr_t)_dyld_get_image_header(0);
-    
-    // Scans the first ~512MB of memory where Roblox's __TEXT segment lives
     size_t search_size = 0x20000000; 
     
     for (uintptr_t i = base; i < base + search_size - pattern_len; i++) {
@@ -72,15 +70,13 @@ void ExecuteLuauBytecode(const char* bytecode, size_t size) {
         return;
     }
 
-    // TODO: You must replace these dummy arrays with the real ARM64 signatures for Roblox.
-    // For now, these are set to 0x00 so it will safely skip execution instead of crashing.
+    // TODO: Replace with real ARM64 signatures when you find them
     static const uint8_t load_sig[]  = { 0x00, 0x00, 0x00, 0x00 }; 
     static const uint8_t pcall_sig[] = { 0x00, 0x00, 0x00, 0x00 };
     
     uintptr_t load_addr = find_pattern(load_sig, "xxxx", sizeof(load_sig));
     uintptr_t pcall_addr = find_pattern(pcall_sig, "xxxx", sizeof(pcall_sig));
 
-    // If signatures are not found (because they are currently 0x00), safely exit
     if (!load_addr || !pcall_addr) {
         NSLog(@"[Spork] Signatures not set. Cannot execute bytecode.");
         return;
@@ -89,7 +85,6 @@ void ExecuteLuauBytecode(const char* bytecode, size_t size) {
     luau_load_t luau_load = (luau_load_t)load_addr;
     lua_pcall_t lua_pcall = (lua_pcall_t)pcall_addr;
 
-    // Load & Execute
     int status = luau_load(g_L, "SporkScript", bytecode, size, 0);
     if (status == 0) {
         lua_pcall(g_L, 0, 0, 0);
@@ -101,10 +96,14 @@ void ExecuteLuauBytecode(const char* bytecode, size_t size) {
 
 __attribute__((constructor))
 static void init() {
-    // Hook lua_gettop via Substrate to safely grab the lua_State
-    void* lua_gettop_ptr = dlsym(RTLD_DEFAULT, "lua_gettop");
-    if (lua_gettop_ptr) {
-        MSHookFunction(lua_gettop_ptr, (void*)&new_lua_gettop, (void**)&orig_lua_gettop);
+    // SAFELY check for substrate before trying to hook to prevent launch crash
+    if (dlsym(RTLD_DEFAULT, "MSHookFunction") != NULL) {
+        void* lua_gettop_ptr = dlsym(RTLD_DEFAULT, "lua_gettop");
+        if (lua_gettop_ptr) {
+            MSHookFunction(lua_gettop_ptr, (void*)&new_lua_gettop, (void**)&orig_lua_gettop);
+        }
+    } else {
+        NSLog(@"[Spork] CydiaSubstrate/ElleKit not found! Cannot hook lua_gettop.");
     }
 
     // Setup UI Window
