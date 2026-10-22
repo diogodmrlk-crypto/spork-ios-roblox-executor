@@ -1,19 +1,5 @@
 #import "SporkUI.h"
 
-// --- Pass-Through View ---
-@interface PassThroughView : UIView
-@end
-@implementation PassThroughView
-- (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
-    UIView *hitView = [super hitTest:point withEvent:event];
-    // If the touch is on the empty background, pass it through to the window (which passes to Roblox)
-    if (hitView == self) {
-        return nil; 
-    }
-    return hitView;
-}
-@end
-
 // --- Custom Button for Squish Effect ---
 @interface SporkButton : UIButton
 @end
@@ -40,8 +26,8 @@
 
 // --- Main View Controller ---
 @interface SporkViewController ()
-@property (nonatomic, strong) PassThroughView *rootView;
-@property (nonatomic, strong) UIView *mainContainer;
+@property (nonatomic, strong, readwrite) UIView *mainContainer;
+@property (nonatomic, strong, readwrite) SporkButton *floatingButton;
 @property (nonatomic, strong) UIView *topBar;
 @property (nonatomic, strong) UIView *contentContainer;
 @property (nonatomic, strong) UIView *sidebar;
@@ -57,21 +43,13 @@
 @property (nonatomic, strong) UITextView *scriptEditor;
 @property (nonatomic, strong) UILabel *tabLabel;
 @property (nonatomic) NSInteger tabCounter;
-
-// Floating Button
-@property (nonatomic, strong) SporkButton *floatingButton;
 @end
 
 @implementation SporkViewController
 
-- (void)loadView {
-    self.rootView = [[PassThroughView alloc] initWithFrame:[UIScreen mainScreen].bounds];
-    self.rootView.backgroundColor = [UIColor clearColor];
-    self.view = self.rootView;
-}
-
 - (void)viewDidLoad {
     [super viewDidLoad];
+    self.view.backgroundColor = [UIColor clearColor];
     self.tabCounter = 1;
     [self setupMainContainer];
     [self setupTopBar];
