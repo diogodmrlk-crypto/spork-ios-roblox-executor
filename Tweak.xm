@@ -42,10 +42,30 @@ static int hooked_luau_load(structures::lua_State* L, const char* chunkname, con
     return orig_luau_load(L, chunkname, data, size, env);
 }
 
+// This function is now called manually from the UI
+extern "C" void injectHook() {
+    NSLog(@"[Spork] Manual inject requested...");
+    for (uint32_t i = 0; i < _dyld_image_count(); i++) {
+        const char* name = _dyld_get_image_name(i);
+        if (strstr(name, "RobloxLib")) {
+            uintptr_t base = _dyld_get_image_vmaddr_slide(i);
+            uintptr_t loadAddr = base + offsets::luau::luau_load;
+            
+            // If the offset is wrong, the app will crash right here
+            MSHookFunction((void*)loadAddr, (void*)hooked_luau_load, (void**)&orig_luau_load);
+            NSLog(@"[Spork] Hooked luau_load at %p", (void*)loadAddr);
+            return;
+        }
+    }
+    NSLog(@"[Spork] RobloxLib not found.");
+}
+
 __attribute__((constructor))
 static void init() {
+    // Initialize the Executor (resolves function pointers)
     SporkExecutor::Initialize();
     
+    // Setup UI Window
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         if (overlayWindow) return; 
 
@@ -75,20 +95,4 @@ static void init() {
         overlayWindow.interactableView1 = vc.mainContainer;
         overlayWindow.interactableView2 = vc.floatingButton;
     });
-}
-
-// Hook luau_load when RobloxLib loads
-static void imageLoaded(const struct mach_header* mh, intptr_t vmaddr_slide) {
-    Dl_info info;
-    if (dladdr(mh, &info)) {
-        if (strstr(info.dli_fname, "RobloxLib")) {
-            uintptr_t base = (uintptr_t)mh;
-            uintptr_t loadAddr = base + offsets::luau::luau_load;
-            MSHookFunction((void*)loadAddr, (void*)hooked_luau_load, (void**)&orig_luau_load);
-            NSLog(@"[Spork] Hooked luau_load at %p", (void*)loadAddr);
-        }
-    }
-}
-__attribute__((constructor)) static void setupHook() {
-    _dyld_register_func_for_add_image(imageLoaded);
 }
