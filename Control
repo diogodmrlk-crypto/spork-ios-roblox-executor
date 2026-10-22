@@ -1,0 +1,8 @@
+Package: com.yourname.spork
+Name: Spork
+Version: 1.0.0
+Architecture: iphoneos-arm
+Description: Spork UI Overlay
+Maintainer: YourName
+Author: YourName
+Section: Tweaks
