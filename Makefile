@@ -6,7 +6,8 @@ include $(THEOS)/makefiles/common.mk
 
 TWEAK_NAME = Spork
 
-Spork_FILES = Tweak.xm SporkUI.m
-Spork_CFLAGS = -fobjc-arc
+Spork_FILES = Tweak.xm SporkUI.m Executor.mm
+Spork_CFLAGS = -fobjc-arc -std=c++17 -I.
+Spork_LIBRARIES = substrate
 
 include $(THEOS_MAKE_PATH)/tweak.mk
