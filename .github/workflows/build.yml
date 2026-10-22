@@ -16,17 +16,14 @@ jobs:
 
       - name: Build Luau Static Library
         run: |
-          # Clone Luau source
           git clone --depth 1 https://github.com/luau-lang/luau.git
           cd luau
-          # Create a build directory for CMake
           mkdir build_ios && cd build_ios
-          # Configure CMake for iOS ARM64 and DISABLE TESTS
           cmake .. -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_BUILD_TYPE=Release -DLUAU_BUILD_CLI=OFF -DLUAU_BUILD_TESTS=OFF
-          # Build the static libraries (Luau.Compiler and Luau.VM)
           make -j$(sysctl -n hw.ncpu)
-          # Copy the .a files to the Theos project root for linking
-          cp libLuau.Compiler.a libLuau.VM.a ${{ github.workspace }}/
+          
+          # Copy ALL required .a files to the project root
+          cp libLuau.Compiler.a libLuau.VM.a libLuau.Ast.a libLuau.Common.a libLuau.Bytecode.a ${{ github.workspace }}/
 
       - name: Build Tweak
         run: |
