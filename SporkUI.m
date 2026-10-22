@@ -1,5 +1,27 @@
 #import "SporkUI.h"
 
+// --- Pass-Through View (Allows Roblox interaction outside the menu) ---
+@interface PassThroughView : UIView
+@property (nonatomic, weak) UIView *interactableView1; // mainContainer
+@property (nonatomic, weak) UIView *interactableView2; // floatingButton
+@end
+@implementation PassThroughView
+- (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
+    UIView *hitView = [super hitTest:point withEvent:event];
+    if (hitView == self) {
+        // Check if touch is on the menu or floating button
+        CGPoint point1 = [self.interactableView1 convertPoint:point fromView:self];
+        if (!self.interactableView1.hidden && [self.interactableView1 pointInside:point1 withEvent:event]) return hitView;
+        
+        CGPoint point2 = [self.interactableView2 convertPoint:point fromView:self];
+        if (!self.interactableView2.hidden && [self.interactableView2 pointInside:point2 withEvent:event]) return hitView;
+        
+        return nil; // Pass touch to Roblox
+    }
+    return hitView;
+}
+@end
+
 // --- Custom Button for Squish Effect ---
 @interface SporkButton : UIButton
 @end
@@ -26,6 +48,7 @@
 
 // --- Main View Controller ---
 @interface SporkViewController ()
+@property (nonatomic, strong) PassThroughView *rootView;
 @property (nonatomic, strong) UIView *mainContainer;
 @property (nonatomic, strong) UIView *topBar;
 @property (nonatomic, strong) UIView *contentContainer;
@@ -33,26 +56,43 @@
 @property (nonatomic, strong) UIView *selectionIndicator;
 @property (nonatomic, strong) NSArray *sidebarButtons;
 
-// Views for Tabs
+// Tabs
 @property (nonatomic, strong) UIView *editorTabView;
 @property (nonatomic, strong) UIView *homeTabView;
 @property (nonatomic, strong) UIView *hacksTabView;
+
+// Editor Elements
+@property (nonatomic, strong) UITextView *scriptEditor;
+@property (nonatomic, strong) UILabel *tabLabel;
+@property (nonatomic) NSInteger tabCounter;
+
+// Floating Button
+@property (nonatomic, strong) SporkButton *floatingButton;
 @end
 
 @implementation SporkViewController
 
+- (void)loadView {
+    self.rootView = [[PassThroughView alloc] initWithFrame:[UIScreen mainScreen].bounds];
+    self.rootView.backgroundColor = [UIColor clearColor];
+    self.view = self.rootView;
+}
+
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.view.backgroundColor = [UIColor clearColor];
+    self.tabCounter = 1;
     [self setupMainContainer];
     [self setupTopBar];
     [self setupSidebar];
     [self setupEditorTab];
     [self setupHomeTab];
     [self setupHacksTab];
+    [self setupFloatingButton];
     
-    // Default to Editor Tab
-    [self switchTab:3]; 
+    self.rootView.interactableView1 = self.mainContainer;
+    self.rootView.interactableView2 = self.floatingButton;
+    
+    [self switchTab:3]; // Start on Editor
 }
 
 #pragma mark - Setup UI
@@ -93,11 +133,9 @@
     self.topBar.layer.maskedCorners = kCALayerMinXMinYCorner | kCALayerMaxXMinYCorner;
     [self.mainContainer addSubview:self.topBar];
     
-    // Drag Gesture
     UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handlePan:)];
     [self.topBar addGestureRecognizer:pan];
 
-    // Icon (Horse placeholder)
     UIImageView *icon = [[UIImageView alloc] initWithImage:[UIImage systemImageNamed:@"hare.fill"]];
     icon.translatesAutoresizingMaskIntoConstraints = NO;
     icon.tintColor = [UIColor whiteColor];
@@ -127,7 +165,6 @@
     execText.font = [UIFont systemFontOfSize:10];
     [self.topBar addSubview:execText];
 
-    // Window Controls
     SporkButton *closeBtn = [SporkButton buttonWithType:UIButtonTypeSystem];
     closeBtn.translatesAutoresizingMaskIntoConstraints = NO;
     [closeBtn setImage:[UIImage systemImageNamed:@"xmark.circle.fill"] forState:UIControlStateNormal];
@@ -244,22 +281,22 @@
     tabHeader.layer.maskedCorners = kCALayerMinXMinYCorner | kCALayerMaxXMinYCorner;
     [self.editorTabView addSubview:tabHeader];
 
-    UILabel *tabLabel = [[UILabel alloc] init];
-    tabLabel.translatesAutoresizingMaskIntoConstraints = NO;
-    tabLabel.text = @"Script 1  x";
-    tabLabel.textColor = [UIColor whiteColor];
-    tabLabel.font = [UIFont systemFontOfSize:12];
-    [tabHeader addSubview:tabLabel];
+    self.tabLabel = [[UILabel alloc] init];
+    self.tabLabel.translatesAutoresizingMaskIntoConstraints = NO;
+    self.tabLabel.text = @"Script 1  x";
+    self.tabLabel.textColor = [UIColor whiteColor];
+    self.tabLabel.font = [UIFont systemFontOfSize:12];
+    [tabHeader addSubview:self.tabLabel];
 
-    UITextView *scriptEditor = [[UITextView alloc] init];
-    scriptEditor.translatesAutoresizingMaskIntoConstraints = NO;
-    scriptEditor.backgroundColor = [UIColor colorWithRed:0.08 green:0.08 blue:0.08 alpha:1.0];
-    scriptEditor.textColor = [UIColor colorWithRed:0.8 green:0.8 blue:0.8 alpha:1.0];
-    scriptEditor.font = [UIFont fontWithName:@"Menlo" size:12];
-    scriptEditor.text = @"loadstring(game:HttpGet(\"https://spork.com/script.lua\"))()";
-    scriptEditor.layer.cornerRadius = 8;
-    scriptEditor.layer.maskedCorners = kCALayerMinXMaxYCorner | kCALayerMaxXMaxYCorner;
-    [self.editorTabView addSubview:scriptEditor];
+    self.scriptEditor = [[UITextView alloc] init];
+    self.scriptEditor.translatesAutoresizingMaskIntoConstraints = NO;
+    self.scriptEditor.backgroundColor = [UIColor colorWithRed:0.08 green:0.08 blue:0.08 alpha:1.0];
+    self.scriptEditor.textColor = [UIColor colorWithRed:0.8 green:0.8 blue:0.8 alpha:1.0];
+    self.scriptEditor.font = [UIFont fontWithName:@"Menlo" size:12];
+    self.scriptEditor.text = @"loadstring(game:HttpGet(\"https://spork.com/script.lua\"))()";
+    self.scriptEditor.layer.cornerRadius = 8;
+    self.scriptEditor.layer.maskedCorners = kCALayerMinXMaxYCorner | kCALayerMaxXMaxYCorner;
+    [self.editorTabView addSubview:self.scriptEditor];
 
     UIView *actionBar = [[UIView alloc] init];
     actionBar.translatesAutoresizingMaskIntoConstraints = NO;
@@ -280,6 +317,13 @@
         btn.titleLabel.font = [UIFont boldSystemFontOfSize:12];
         btn.backgroundColor = (i == 0) ? [UIColor colorWithRed:0.0 green:0.5 blue:1.0 alpha:1.0] : [UIColor colorWithWhite:0.2 alpha:1.0];
         btn.layer.cornerRadius = 6;
+        
+        // Add actions for buttons
+        if (i == 1) [btn addTarget:self action:@selector(clearAction) forControlEvents:UIControlEventTouchUpInside];
+        if (i == 2) [btn addTarget:self action:@selector(copyAction) forControlEvents:UIControlEventTouchUpInside];
+        if (i == 3) [btn addTarget:self action:@selector(pasteAction) forControlEvents:UIControlEventTouchUpInside];
+        if (i == 4) [btn addTarget:self action:@selector(newTabAction) forControlEvents:UIControlEventTouchUpInside];
+        
         [btnStack addArrangedSubview:btn];
     }
 
@@ -294,13 +338,13 @@
         [tabHeader.trailingAnchor constraintEqualToAnchor:self.editorTabView.trailingAnchor],
         [tabHeader.heightAnchor constraintEqualToConstant:30],
 
-        [tabLabel.leadingAnchor constraintEqualToAnchor:tabHeader.leadingAnchor constant:10],
-        [tabLabel.centerYAnchor constraintEqualToAnchor:tabHeader.centerYAnchor],
+        [self.tabLabel.leadingAnchor constraintEqualToAnchor:tabHeader.leadingAnchor constant:10],
+        [self.tabLabel.centerYAnchor constraintEqualToAnchor:tabHeader.centerYAnchor],
 
-        [scriptEditor.topAnchor constraintEqualToAnchor:tabHeader.bottomAnchor],
-        [scriptEditor.leadingAnchor constraintEqualToAnchor:tabHeader.leadingAnchor],
-        [scriptEditor.trailingAnchor constraintEqualToAnchor:tabHeader.trailingAnchor],
-        [scriptEditor.bottomAnchor constraintEqualToAnchor:actionBar.topAnchor constant:-10],
+        [self.scriptEditor.topAnchor constraintEqualToAnchor:tabHeader.bottomAnchor],
+        [self.scriptEditor.leadingAnchor constraintEqualToAnchor:tabHeader.leadingAnchor],
+        [self.scriptEditor.trailingAnchor constraintEqualToAnchor:tabHeader.trailingAnchor],
+        [self.scriptEditor.bottomAnchor constraintEqualToAnchor:actionBar.topAnchor constant:-10],
 
         [actionBar.leadingAnchor constraintEqualToAnchor:tabHeader.leadingAnchor],
         [actionBar.trailingAnchor constraintEqualToAnchor:tabHeader.trailingAnchor],
@@ -328,7 +372,6 @@
     title.font = [UIFont boldSystemFontOfSize:16];
     [self.homeTabView addSubview:title];
     
-    // Fake Progress Bar
     UIView *progressBg = [[UIView alloc] init];
     progressBg.translatesAutoresizingMaskIntoConstraints = NO;
     progressBg.backgroundColor = [UIColor darkGrayColor];
@@ -411,6 +454,27 @@
     ]];
 }
 
+#pragma mark - Floating Button
+
+- (void)setupFloatingButton {
+    self.floatingButton = [SporkButton buttonWithType:UIButtonTypeSystem];
+    self.floatingButton.frame = CGRectMake(100, 100, 50, 50); // Initial position
+    self.floatingButton.backgroundColor = [UIColor colorWithRed:0.1 green:0.1 blue:0.1 alpha:0.9];
+    self.floatingButton.layer.cornerRadius = 25;
+    self.floatingButton.layer.borderWidth = 1;
+    self.floatingButton.layer.borderColor = [UIColor colorWithWhite:0.3 alpha:1.0].CGColor;
+    [self.floatingButton setImage:[UIImage systemImageNamed:@"hare.fill"] forState:UIControlStateNormal];
+    [self.floatingButton setTintColor:[UIColor whiteColor]];
+    self.floatingButton.hidden = YES;
+    [self.view addSubview:self.floatingButton];
+    
+    // Drag gesture for floating button
+    UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handleFloatPan:)];
+    [self.floatingButton addGestureRecognizer:pan];
+    
+    [self.floatingButton addTarget:self action:@selector(restoreMenu) forControlEvents:UIControlEventTouchUpInside];
+}
+
 #pragma mark - Actions
 
 - (void)sidebarTapped:(SporkButton *)sender {
@@ -418,55 +482,132 @@
 }
 
 - (void)switchTab:(NSInteger)index {
-    // Hide all
     self.homeTabView.hidden = YES;
     self.hacksTabView.hidden = YES;
     self.editorTabView.hidden = YES;
     
-    // Show selected
-    if (index == 0) {
-        self.editorTabView.hidden = NO;
-    } else if (index == 1) {
-        self.homeTabView.hidden = NO;
-    } else if (index == 2) {
-        self.hacksTabView.hidden = NO;
-    } else if (index == 3) {
-        self.editorTabView.hidden = NO;
-    } else {
-        self.editorTabView.hidden = NO;
-    }
+    if (index == 0) self.editorTabView.hidden = NO;
+    else if (index == 1) self.homeTabView.hidden = NO;
+    else if (index == 2) self.hacksTabView.hidden = NO;
+    else if (index == 3) self.editorTabView.hidden = NO;
+    else self.editorTabView.hidden = NO;
     
-    // Animate indicator
     SporkButton *selectedBtn = self.sidebarButtons[index];
     [UIView animateWithDuration:0.3 delay:0 usingSpringWithDamping:0.7 initialSpringVelocity:0.5 options:UIViewAnimationOptionAllowUserInteraction animations:^{
         self.selectionIndicator.center = CGPointMake(self.selectionIndicator.center.x, selectedBtn.center.y + 30);
     } completion:nil];
 }
 
-- (void)hideMenu {
-    self.mainContainer.hidden = YES;
+// Button Actions
+- (void)copyAction {
+    if (self.scriptEditor.text.length > 0) {
+        [UIPasteboard generalPasteboard].string = self.scriptEditor.text;
+    }
 }
 
-#pragma mark - Drag & Squish Animation
+- (void)pasteAction {
+    NSString *pasteString = [UIPasteboard generalPasteboard].string;
+    if (pasteString) {
+        self.scriptEditor.text = [self.scriptEditor.text stringByAppendingString:pasteString];
+    }
+}
+
+- (void)clearAction {
+    self.scriptEditor.text = @"";
+}
+
+- (void)newTabAction {
+    self.tabCounter++;
+    self.tabLabel.text = [NSString stringWithFormat:@"Script %ld  x", (long)self.tabCounter];
+    self.scriptEditor.text = @"";
+}
+
+- (void)hideMenu {
+    [UIView animateWithDuration:0.2 delay:0 options:UIViewAnimationOptionCurveEaseIn animations:^{
+        self.mainContainer.transform = CGAffineTransformMakeScale(0.1, 0.1);
+        self.mainContainer.alpha = 0;
+    } completion:^(BOOL finished) {
+        self.mainContainer.hidden = YES;
+        self.mainContainer.transform = CGAffineTransformIdentity;
+        self.mainContainer.alpha = 1;
+        
+        self.floatingButton.hidden = NO;
+        self.floatingButton.transform = CGAffineTransformMakeScale(0.1, 0.1);
+        [UIView animateWithDuration:0.5 delay:0 usingSpringWithDamping:0.5 initialSpringVelocity:1.0 options:0 animations:^{
+            self.floatingButton.transform = CGAffineTransformIdentity;
+        } completion:nil];
+    }];
+}
+
+- (void)restoreMenu {
+    self.floatingButton.hidden = YES;
+    self.mainContainer.hidden = NO;
+    self.mainContainer.transform = CGAffineTransformMakeScale(0.1, 0.1);
+    self.mainContainer.alpha = 0;
+    
+    // Size-up with massive recoil
+    [UIView animateWithDuration:0.6 delay:0 usingSpringWithDamping:0.4 initialSpringVelocity:1.5 options:UIViewAnimationOptionAllowUserInteraction animations:^{
+        self.mainContainer.transform = CGAffineTransformIdentity;
+        self.mainContainer.alpha = 1;
+    } completion:nil];
+}
+
+#pragma mark - Drag & Smooth Recoil
 
 - (void)handlePan:(UIPanGestureRecognizer *)sender {
     CGPoint translation = [sender translationInView:self.view];
+    CGPoint velocity = [sender velocityInView:self.view];
     
     if (sender.state == UIGestureRecognizerStateBegan) {
-        // SQUISH EFFECT ON GRAB
-        [UIView animateWithDuration:0.2 delay:0 options:UIViewAnimationOptionAllowUserInteraction animations:^{
+        [UIView animateWithDuration:0.2 delay:0 options:UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionBeginFromCurrentState animations:^{
             self.mainContainer.transform = CGAffineTransformMakeScale(0.96, 0.96);
         } completion:nil];
     }
     
-    // Move the container
-    self.mainContainer.center = CGPointMake(self.mainContainer.center.x + translation.x, self.mainContainer.center.y + translation.y);
+    CGPoint newCenter = CGPointMake(self.mainContainer.center.x + translation.x, self.mainContainer.center.y + translation.y);
+    
+    // Smooth follow (less sticky) with dynamic squish based on speed
+    CGFloat speed = sqrt(velocity.x*velocity.x + velocity.y*velocity.y);
+    CGFloat scale = 1.0;
+    if (speed > 1000) {
+        scale = 0.92; // Stretch/squish heavily on fast drags
+    } else if (speed > 300) {
+        scale = 0.94;
+    } else {
+        scale = 0.96;
+    }
+    
+    // Using a short animation makes it smoothly trail the finger instead of being locked 1:1
+    [UIView animateWithDuration:0.08 delay:0 options:UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionCurveEaseOut animations:^{
+        self.mainContainer.center = newCenter;
+        self.mainContainer.transform = CGAffineTransformMakeScale(scale, scale);
+    } completion:nil];
+    
     [sender setTranslation:CGPointZero inView:self.view];
     
     if (sender.state == UIGestureRecognizerStateEnded || sender.state == UIGestureRecognizerStateCancelled) {
-        // BOUNCY SPRING EFFECT ON RELEASE
-        [UIView animateWithDuration:0.5 delay:0 usingSpringWithDamping:0.4 initialSpringVelocity:1.5 options:UIViewAnimationOptionAllowUserInteraction animations:^{
+        // Smooth jelly recoil when letting go
+        [UIView animateWithDuration:0.6 delay:0 usingSpringWithDamping:0.35 initialSpringVelocity:speed/1000.0 options:UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionBeginFromCurrentState animations:^{
             self.mainContainer.transform = CGAffineTransformIdentity;
+        } completion:nil];
+    }
+}
+
+- (void)handleFloatPan:(UIPanGestureRecognizer *)sender {
+    CGPoint translation = [sender translationInView:self.view];
+    
+    if (sender.state == UIGestureRecognizerStateBegan) {
+        [UIView animateWithDuration:0.1 animations:^{
+            self.floatingButton.transform = CGAffineTransformMakeScale(0.9, 0.9);
+        }];
+    }
+    
+    self.floatingButton.center = CGPointMake(self.floatingButton.center.x + translation.x, self.floatingButton.center.y + translation.y);
+    [sender setTranslation:CGPointZero inView:self.view];
+    
+    if (sender.state == UIGestureRecognizerStateEnded || sender.state == UIGestureRecognizerStateCancelled) {
+        [UIView animateWithDuration:0.4 delay:0 usingSpringWithDamping:0.5 initialSpringVelocity:1.0 options:UIViewAnimationOptionAllowUserInteraction animations:^{
+            self.floatingButton.transform = CGAffineTransformIdentity;
         } completion:nil];
     }
 }
