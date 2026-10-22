@@ -3,6 +3,8 @@
 #import <mach/mach.h>
 #import <string.h>
 #import <stdlib.h>
+#import <dlfcn.h>
+#import <substrate.h>
 #import "SporkUI.h"
 
 // --- Pass-Through Window ---
@@ -28,8 +30,84 @@
 
 static PassThroughWindow *overlayWindow = nil;
 
+#pragma mark - Executor Logic & Pattern Scanning
+
+typedef int (*lua_pcall_t)(void* L, int nargs, int nresults, int errfunc);
+typedef int (*luau_load_t)(void* L, const char* chunkname, const char* data, size_t size, int env);
+typedef int (*lua_gettop_t)(void* L);
+
+static void* g_L = NULL;
+static lua_gettop_t orig_lua_gettop = NULL;
+
+// A dummy hook to capture the lua_State
+int new_lua_gettop(void* L) {
+    if (!g_L) g_L = L; 
+    if (orig_lua_gettop) return orig_lua_gettop(L);
+    return 0;
+}
+
+// ARM64 Pattern Scanner (Fixed string types)
+uintptr_t find_pattern(const uint8_t* pattern, const char* mask, size_t pattern_len) {
+    uintptr_t base = (uintptr_t)_dyld_get_image_header(0);
+    
+    // Scans the first ~512MB of memory where Roblox's __TEXT segment lives
+    size_t search_size = 0x20000000; 
+    
+    for (uintptr_t i = base; i < base + search_size - pattern_len; i++) {
+        BOOL found = YES;
+        for (size_t j = 0; j < pattern_len; j++) {
+            if (mask[j] == 'x' && *(uint8_t*)(i + j) != pattern[j]) {
+                found = NO;
+                break;
+            }
+        }
+        if (found) return i;
+    }
+    return 0;
+}
+
+void ExecuteLuauBytecode(const char* bytecode, size_t size) {
+    if (!g_L) {
+        NSLog(@"[Spork] Error: Lua State not found yet.");
+        return;
+    }
+
+    // TODO: You must replace these dummy arrays with the real ARM64 signatures for Roblox.
+    // For now, these are set to 0x00 so it will safely skip execution instead of crashing.
+    static const uint8_t load_sig[]  = { 0x00, 0x00, 0x00, 0x00 }; 
+    static const uint8_t pcall_sig[] = { 0x00, 0x00, 0x00, 0x00 };
+    
+    uintptr_t load_addr = find_pattern(load_sig, "xxxx", sizeof(load_sig));
+    uintptr_t pcall_addr = find_pattern(pcall_sig, "xxxx", sizeof(pcall_sig));
+
+    // If signatures are not found (because they are currently 0x00), safely exit
+    if (!load_addr || !pcall_addr) {
+        NSLog(@"[Spork] Signatures not set. Cannot execute bytecode.");
+        return;
+    }
+
+    luau_load_t luau_load = (luau_load_t)load_addr;
+    lua_pcall_t lua_pcall = (lua_pcall_t)pcall_addr;
+
+    // Load & Execute
+    int status = luau_load(g_L, "SporkScript", bytecode, size, 0);
+    if (status == 0) {
+        lua_pcall(g_L, 0, 0, 0);
+        NSLog(@"[Spork] Bytecode Executed Successfully");
+    } else {
+        NSLog(@"[Spork] Load Failed: %d", status);
+    }
+}
+
 __attribute__((constructor))
 static void init() {
+    // Hook lua_gettop via Substrate to safely grab the lua_State
+    void* lua_gettop_ptr = dlsym(RTLD_DEFAULT, "lua_gettop");
+    if (lua_gettop_ptr) {
+        MSHookFunction(lua_gettop_ptr, (void*)&new_lua_gettop, (void**)&orig_lua_gettop);
+    }
+
+    // Setup UI Window
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         if (overlayWindow) return; 
 
@@ -59,86 +137,4 @@ static void init() {
         overlayWindow.interactableView1 = vc.mainContainer;
         overlayWindow.interactableView2 = vc.floatingButton;
     });
-}
-
-#pragma mark - Executor Logic & Pattern Scanning
-
-typedef void* (*lua_State_t)(void);
-typedef int (*luau_load_t)(void* L, const char* chunkname, const char* data, size_t size, int env);
-typedef int (*lua_pcall_t)(void* L, int nargs, int nresults, int errfunc);
-
-// Store the active Lua State globally
-static void* g_L = NULL;
-
-// Hook lua_gettop to silently steal the Lua State when the game calls it
-int (*orig_lua_gettop)(void* L);
-int new_lua_gettop(void* L) {
-    if (!g_L) g_L = L; // Save the state
-    return orig_lua_gettop(L);
-}
-
-// ARM64 Pattern Scanner
-uintptr_t find_pattern(const char* pattern, const char* mask, size_t pattern_len) {
-    uintptr_t base = (uintptr_t)_dyld_get_image_header(0);
-    uintptr_t slide = _dyld_get_image_vmaddr_slide(0);
-    
-    // Get the __TEXT segment size (approx first 0x2000000 bytes for Roblox)
-    // In a real production environment, you'd parse the Mach-O headers to get the exact size
-    size_t search_size = 0x20000000; 
-    
-    for (uintptr_t i = base; i < base + search_size - pattern_len; i++) {
-        BOOL found = YES;
-        for (size_t j = 0; j < pattern_len; j++) {
-            if (mask[j] == 'x' && *(char*)(i + j) != pattern[j]) {
-                found = NO;
-                break;
-            }
-        }
-        if (found) return i;
-    }
-    return 0;
-}
-
-void ExecuteLuauBytecode(const char* bytecode, size_t size) {
-    if (!g_L) {
-        NSLog(@"[Spork] Error: Lua State not found yet. Wait a few seconds after joining a game.");
-        return;
-    }
-
-    // --- IMPORTANT: You must find the correct signatures for the current Roblox version ---
-    // The example signatures below are placeholders. You can find these by reverse engineering 
-    // the current Roblox binary in IDA/Ghidra.
-    
-    // 1. Find luau_load
-    // Look for the assembly instructions that setup the stack frame for luau_load
-    const char* load_sig = "\x??\x??\x??\x??"; // Replace with real signature
-    uintptr_t load_addr = find_pattern(load_sig, "xxxx", 4);
-    
-    // 2. Find lua_pcall
-    const char* pcall_sig = "\x??\x??\x??\x??"; // Replace with real signature
-    uintptr_t pcall_addr = find_pattern(pcall_sig, "xxxx", 4);
-
-    if (load_addr && pcall_addr) {
-        luau_load_t luau_load = (luau_load_t)load_addr;
-        lua_pcall_t lua_pcall = (lua_pcall_t)pcall_addr;
-
-        // Load the bytecode
-        int status = luau_load(g_L, "SporkScript", bytecode, size, 0);
-        
-        if (status == 0) {
-            // Execute the loaded chunk
-            lua_pcall(g_L, 0, 0, 0);
-            NSLog(@"[Spork] Script Executed Successfully");
-        } else {
-            NSLog(@"[Spork] Bytecode Load Failed with status: %d", status);
-        }
-    } else {
-        NSLog(@"[Spork] Failed to find luau_load or lua_pcall signatures.");
-    }
-}
-
-// Hook to capture state (Ensure you hook a function that Roblox calls constantly)
-%hookf(int, lua_gettop, void* L) {
-    if (!g_L) g_L = L;
-    return orig_lua_gettop(L);
 }
