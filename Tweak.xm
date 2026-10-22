@@ -4,7 +4,6 @@
 #import <string.h>
 #import <stdlib.h>
 #import <dlfcn.h>
-#import <substrate.h>
 #import "SporkUI.h"
 
 // --- Pass-Through Window ---
@@ -34,17 +33,8 @@ static PassThroughWindow *overlayWindow = nil;
 
 typedef int (*lua_pcall_t)(void* L, int nargs, int nresults, int errfunc);
 typedef int (*luau_load_t)(void* L, const char* chunkname, const char* data, size_t size, int env);
-typedef int (*lua_gettop_t)(void* L);
 
 static void* g_L = NULL;
-static lua_gettop_t orig_lua_gettop = NULL;
-
-// A dummy hook to capture the lua_State
-int new_lua_gettop(void* L) {
-    if (!g_L) g_L = L; 
-    if (orig_lua_gettop) return orig_lua_gettop(L);
-    return 0;
-}
 
 // ARM64 Pattern Scanner
 uintptr_t find_pattern(const uint8_t* pattern, const char* mask, size_t pattern_len) {
@@ -70,7 +60,7 @@ void ExecuteLuauBytecode(const char* bytecode, size_t size) {
         return;
     }
 
-    // TODO: Replace with real ARM64 signatures when you find them
+    // Placeholder signatures (will not execute until replaced)
     static const uint8_t load_sig[]  = { 0x00, 0x00, 0x00, 0x00 }; 
     static const uint8_t pcall_sig[] = { 0x00, 0x00, 0x00, 0x00 };
     
@@ -96,17 +86,10 @@ void ExecuteLuauBytecode(const char* bytecode, size_t size) {
 
 __attribute__((constructor))
 static void init() {
-    // SAFELY check for substrate before trying to hook to prevent launch crash
-    if (dlsym(RTLD_DEFAULT, "MSHookFunction") != NULL) {
-        void* lua_gettop_ptr = dlsym(RTLD_DEFAULT, "lua_gettop");
-        if (lua_gettop_ptr) {
-            MSHookFunction(lua_gettop_ptr, (void*)&new_lua_gettop, (void**)&orig_lua_gettop);
-        }
-    } else {
-        NSLog(@"[Spork] CydiaSubstrate/ElleKit not found! Cannot hook lua_gettop.");
-    }
+    // Substrate hook removed to prevent crash. 
+    // The UI will load safely, but g_L will remain NULL until you 
+    // implement a substrate-free way to capture the lua_State.
 
-    // Setup UI Window
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         if (overlayWindow) return; 
 
