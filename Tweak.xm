@@ -39,27 +39,33 @@ static int hooked_luau_load(structures::lua_State* L, const char* chunkname, con
 
 extern "C" void injectHook() {
     NSLog(@"[Spork] Manual inject requested...");
+    uintptr_t base = 0;
     for (uint32_t i = 0; i < _dyld_image_count(); i++) {
         const char* name = _dyld_get_image_name(i);
         if (strstr(name, "RobloxLib")) {
-            uintptr_t base = _dyld_get_image_vmaddr_slide(i);
-            uintptr_t loadAddr = base + offsets::luau::luau_load;
-            
-            MSHookFunction((void*)loadAddr, (void*)hooked_luau_load, (void**)&orig_luau_load);
-            NSLog(@"[Spork] Hooked luau_load at %p", (void*)loadAddr);
-            return;
+            base = (uintptr_t)_dyld_get_image_header(i);
+            break;
         }
     }
-    NSLog(@"[Spork] RobloxLib not found.");
+    
+    if (base) {
+        uintptr_t loadAddr = base + offsets::luau::luau_load;
+        NSLog(@"[Spork] Trying to hook luau_load at %p (Base: %p + Offset: %p)", (void*)loadAddr, (void*)base, (void*)offsets::luau::luau_load);
+        MSHookFunction((void*)loadAddr, (void*)hooked_luau_load, (void**)&orig_luau_load);
+        NSLog(@"[Spork] Hook applied successfully!");
+    } else {
+        NSLog(@"[Spork] RobloxLib not found.");
+    }
 }
 
 __attribute__((constructor))
 static void init() {
-    // REMOVED: SporkExecutor::Initialize(); from here
+    NSLog(@"[Spork] Constructor started! (This proves dyld loaded the tweak)");
     
-    // Setup UI Window after a delay to ensure Roblox is loaded
+    // Setup UI Window after a delay
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        // Initialize the Executor NOW, when RobloxLib is guaranteed to be loaded
+        NSLog(@"[Spork] Initializing Executor and UI...");
+        
         SporkExecutor::Initialize();
 
         if (overlayWindow) return; 
@@ -85,11 +91,10 @@ static void init() {
         SporkViewController *vc = [[SporkViewController alloc] init];
         overlayWindow.rootViewController = vc;
         overlayWindow.hidden = NO;
-        
-        // Use makeKeyAndVisible safely
         [overlayWindow makeKeyAndVisible];
         
         overlayWindow.interactableView1 = vc.mainContainer;
         overlayWindow.interactableView2 = vc.floatingButton;
+        NSLog(@"[Spork] UI Setup Complete!");
     });
 }
