@@ -7,9 +7,14 @@ include $(THEOS)/makefiles/common.mk
 TWEAK_NAME = Spork
 
 Spork_FILES = Tweak.xm SporkUI.m Executor.mm
-# -I. tells the compiler to look in the current directory
-Spork_CFLAGS = -fobjc-arc -std=c++17 -I. -Iluau/Common/include -Iluau/Compiler/include -Iluau/VM/include
+
+# Flags for pure Objective-C files (SporkUI.m)
+Spork_CCFLAGS = -fobjc-arc
+
+# Flags for C++ and Objective-C++ files (Tweak.xm, Executor.mm)
+Spork_CXXFLAGS = -fobjc-arc -std=c++17 -I$(THEOS_PROJECT_DIR) -I$(THEOS_PROJECT_DIR)/luau/Common/include -I$(THEOS_PROJECT_DIR)/luau/Compiler/include -I$(THEOS_PROJECT_DIR)/luau/VM/include
+
 Spork_LIBRARIES = substrate
-Spork_LDFLAGS = ./libLuau.Compiler.a ./libLuau.VM.a
+Spork_LDFLAGS = $(THEOS_PROJECT_DIR)/libLuau.Compiler.a $(THEOS_PROJECT_DIR)/libLuau.VM.a
 
 include $(THEOS_MAKE_PATH)/tweak.mk
