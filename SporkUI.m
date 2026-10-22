@@ -1,4 +1,5 @@
 #import "SporkUI.h"
+#import "Executor.hpp"
 
 // --- Custom Button for Squish Effect ---
 @interface SporkButton : UIButton
@@ -6,21 +7,15 @@
 @implementation SporkButton
 - (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
     [super touchesBegan:touches withEvent:event];
-    [UIView animateWithDuration:0.1 animations:^{
-        self.transform = CGAffineTransformMakeScale(0.92, 0.92);
-    }];
+    [UIView animateWithDuration:0.1 animations:^{ self.transform = CGAffineTransformMakeScale(0.92, 0.92); }];
 }
 - (void)touchesEnded:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
     [super touchesEnded:touches withEvent:event];
-    [UIView animateWithDuration:0.4 delay:0 usingSpringWithDamping:0.5 initialSpringVelocity:1.0 options:UIViewAnimationOptionAllowUserInteraction animations:^{
-        self.transform = CGAffineTransformIdentity;
-    } completion:nil];
+    [UIView animateWithDuration:0.4 delay:0 usingSpringWithDamping:0.5 initialSpringVelocity:1.0 options:UIViewAnimationOptionAllowUserInteraction animations:^{ self.transform = CGAffineTransformIdentity; } completion:nil];
 }
 - (void)touchesCancelled:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
     [super touchesCancelled:touches withEvent:event];
-    [UIView animateWithDuration:0.4 delay:0 usingSpringWithDamping:0.5 initialSpringVelocity:1.0 options:UIViewAnimationOptionAllowUserInteraction animations:^{
-        self.transform = CGAffineTransformIdentity;
-    } completion:nil];
+    [UIView animateWithDuration:0.4 delay:0 usingSpringWithDamping:0.5 initialSpringVelocity:1.0 options:UIViewAnimationOptionAllowUserInteraction animations:^{ self.transform = CGAffineTransformIdentity; } completion:nil];
 }
 @end
 
@@ -33,10 +28,6 @@
 @property (nonatomic, strong) UIView *sidebar;
 @property (nonatomic, strong) UIView *selectionIndicator;
 @property (nonatomic, strong) NSArray *sidebarButtons;
-
-// Constraints for dragging
-@property (nonatomic, strong) NSLayoutConstraint *centerXConstraint;
-@property (nonatomic, strong) NSLayoutConstraint *centerYConstraint;
 
 @property (nonatomic, strong) UIView *editorTabView;
 @property (nonatomic, strong) UIView *homeTabView;
@@ -80,21 +71,14 @@
 
     NSLayoutConstraint *widthConstraint = [self.mainContainer.widthAnchor constraintEqualToConstant:650];
     widthConstraint.priority = UILayoutPriorityDefaultHigh;
-
     NSLayoutConstraint *heightConstraint = [self.mainContainer.heightAnchor constraintEqualToConstant:400];
     heightConstraint.priority = UILayoutPriorityDefaultHigh;
 
-    // Store the center constraints so we can modify them during drag
-    self.centerXConstraint = [self.mainContainer.centerXAnchor constraintEqualToAnchor:self.view.centerXAnchor];
-    self.centerYConstraint = [self.mainContainer.centerYAnchor constraintEqualToAnchor:self.view.centerYAnchor];
-
     [NSLayoutConstraint activateConstraints:@[
-        self.centerXConstraint,
-        self.centerYConstraint,
-        widthConstraint,
-        [self.mainContainer.widthAnchor constraintLessThanOrEqualToAnchor:self.view.widthAnchor multiplier:0.95],
-        heightConstraint,
-        [self.mainContainer.heightAnchor constraintLessThanOrEqualToAnchor:self.view.heightAnchor multiplier:0.8]
+        [self.mainContainer.centerXAnchor constraintEqualToAnchor:self.view.centerXAnchor],
+        [self.mainContainer.centerYAnchor constraintEqualToAnchor:self.view.centerYAnchor],
+        widthConstraint, [self.mainContainer.widthAnchor constraintLessThanOrEqualToAnchor:self.view.widthAnchor multiplier:0.95],
+        heightConstraint, [self.mainContainer.heightAnchor constraintLessThanOrEqualToAnchor:self.view.heightAnchor multiplier:0.8]
     ]];
 }
 
@@ -150,22 +134,17 @@
         [self.topBar.leadingAnchor constraintEqualToAnchor:self.mainContainer.leadingAnchor],
         [self.topBar.trailingAnchor constraintEqualToAnchor:self.mainContainer.trailingAnchor],
         [self.topBar.heightAnchor constraintEqualToConstant:50],
-
         [icon.leadingAnchor constraintEqualToAnchor:self.topBar.leadingAnchor constant:15],
         [icon.centerYAnchor constraintEqualToAnchor:self.topBar.centerYAnchor],
         [icon.widthAnchor constraintEqualToConstant:20],
         [icon.heightAnchor constraintEqualToConstant:20],
-
         [title.leadingAnchor constraintEqualToAnchor:icon.trailingAnchor constant:8],
         [title.centerYAnchor constraintEqualToAnchor:self.topBar.centerYAnchor],
-
         [proBadge.leadingAnchor constraintEqualToAnchor:title.trailingAnchor constant:8],
         [proBadge.centerYAnchor constraintEqualToAnchor:self.topBar.centerYAnchor],
         [proBadge.heightAnchor constraintEqualToConstant:16],
-
         [execText.leadingAnchor constraintEqualToAnchor:proBadge.trailingAnchor constant:15],
         [execText.centerYAnchor constraintEqualToAnchor:self.topBar.centerYAnchor],
-
         [closeBtn.trailingAnchor constraintEqualToAnchor:self.topBar.trailingAnchor constant:-15],
         [closeBtn.centerYAnchor constraintEqualToAnchor:self.topBar.centerYAnchor],
         [closeBtn.widthAnchor constraintEqualToConstant:24],
@@ -214,10 +193,8 @@
         [self.sidebar.leadingAnchor constraintEqualToAnchor:self.mainContainer.leadingAnchor],
         [self.sidebar.bottomAnchor constraintEqualToAnchor:self.mainContainer.bottomAnchor],
         [self.sidebar.widthAnchor constraintEqualToConstant:60],
-
         [stack.topAnchor constraintEqualToAnchor:self.sidebar.topAnchor constant:30],
         [stack.centerXAnchor constraintEqualToAnchor:self.sidebar.centerXAnchor],
-
         [self.selectionIndicator.leadingAnchor constraintEqualToAnchor:self.sidebar.leadingAnchor],
         [self.selectionIndicator.topAnchor constraintEqualToAnchor:stack.topAnchor],
         [self.selectionIndicator.widthAnchor constraintEqualToConstant:4],
@@ -266,7 +243,7 @@
     self.scriptEditor.backgroundColor = [UIColor colorWithRed:0.08 green:0.08 blue:0.08 alpha:1.0];
     self.scriptEditor.textColor = [UIColor colorWithRed:0.8 green:0.8 blue:0.8 alpha:1.0];
     self.scriptEditor.font = [UIFont fontWithName:@"Menlo" size:12];
-    self.scriptEditor.text = @"loadstring(game:HttpGet(\"https://spork.com/script.lua\"))()";
+    self.scriptEditor.text = @"print(\"Hello from Spork!\")";
     self.scriptEditor.layer.cornerRadius = 8;
     self.scriptEditor.layer.maskedCorners = kCALayerMinXMaxYCorner | kCALayerMaxXMaxYCorner;
     [self.editorTabView addSubview:self.scriptEditor];
@@ -291,6 +268,7 @@
         btn.backgroundColor = (i == 0) ? [UIColor colorWithRed:0.0 green:0.5 blue:1.0 alpha:1.0] : [UIColor colorWithWhite:0.2 alpha:1.0];
         btn.layer.cornerRadius = 6;
         
+        if (i == 0) [btn addTarget:self action:@selector(executeScriptAction) forControlEvents:UIControlEventTouchUpInside];
         if (i == 1) [btn addTarget:self action:@selector(clearAction) forControlEvents:UIControlEventTouchUpInside];
         if (i == 2) [btn addTarget:self action:@selector(copyAction) forControlEvents:UIControlEventTouchUpInside];
         if (i == 3) [btn addTarget:self action:@selector(pasteAction) forControlEvents:UIControlEventTouchUpInside];
@@ -304,25 +282,20 @@
         [self.editorTabView.leadingAnchor constraintEqualToAnchor:self.contentContainer.leadingAnchor constant:15],
         [self.editorTabView.trailingAnchor constraintEqualToAnchor:self.contentContainer.trailingAnchor constant:-15],
         [self.editorTabView.bottomAnchor constraintEqualToAnchor:self.contentContainer.bottomAnchor constant:-15],
-
         [tabHeader.topAnchor constraintEqualToAnchor:self.editorTabView.topAnchor],
         [tabHeader.leadingAnchor constraintEqualToAnchor:self.editorTabView.leadingAnchor],
         [tabHeader.trailingAnchor constraintEqualToAnchor:self.editorTabView.trailingAnchor],
         [tabHeader.heightAnchor constraintEqualToConstant:30],
-
         [self.tabLabel.leadingAnchor constraintEqualToAnchor:tabHeader.leadingAnchor constant:10],
         [self.tabLabel.centerYAnchor constraintEqualToAnchor:tabHeader.centerYAnchor],
-
         [self.scriptEditor.topAnchor constraintEqualToAnchor:tabHeader.bottomAnchor],
         [self.scriptEditor.leadingAnchor constraintEqualToAnchor:tabHeader.leadingAnchor],
         [self.scriptEditor.trailingAnchor constraintEqualToAnchor:tabHeader.trailingAnchor],
         [self.scriptEditor.bottomAnchor constraintEqualToAnchor:actionBar.topAnchor constant:-10],
-
         [actionBar.leadingAnchor constraintEqualToAnchor:tabHeader.leadingAnchor],
         [actionBar.trailingAnchor constraintEqualToAnchor:tabHeader.trailingAnchor],
         [actionBar.bottomAnchor constraintEqualToAnchor:self.editorTabView.bottomAnchor],
         [actionBar.heightAnchor constraintEqualToConstant:35],
-
         [btnStack.leadingAnchor constraintEqualToAnchor:actionBar.leadingAnchor],
         [btnStack.trailingAnchor constraintEqualToAnchor:actionBar.trailingAnchor],
         [btnStack.topAnchor constraintEqualToAnchor:actionBar.topAnchor],
@@ -361,15 +334,12 @@
         [self.homeTabView.leadingAnchor constraintEqualToAnchor:self.contentContainer.leadingAnchor constant:15],
         [self.homeTabView.trailingAnchor constraintEqualToAnchor:self.contentContainer.trailingAnchor constant:-15],
         [self.homeTabView.bottomAnchor constraintEqualToAnchor:self.contentContainer.bottomAnchor constant:-15],
-        
         [title.topAnchor constraintEqualToAnchor:self.homeTabView.topAnchor constant:10],
         [title.leadingAnchor constraintEqualToAnchor:self.homeTabView.leadingAnchor constant:10],
-        
         [progressBg.topAnchor constraintEqualToAnchor:title.bottomAnchor constant:10],
         [progressBg.leadingAnchor constraintEqualToAnchor:self.homeTabView.leadingAnchor constant:10],
         [progressBg.trailingAnchor constraintEqualToAnchor:self.homeTabView.trailingAnchor constant:-10],
         [progressBg.heightAnchor constraintEqualToConstant:12],
-        
         [progressFill.leadingAnchor constraintEqualToAnchor:progressBg.leadingAnchor],
         [progressFill.topAnchor constraintEqualToAnchor:progressBg.topAnchor],
         [progressFill.bottomAnchor constraintEqualToAnchor:progressBg.bottomAnchor],
@@ -416,10 +386,8 @@
         [self.hacksTabView.leadingAnchor constraintEqualToAnchor:self.contentContainer.leadingAnchor constant:15],
         [self.hacksTabView.trailingAnchor constraintEqualToAnchor:self.contentContainer.trailingAnchor constant:-15],
         [self.hacksTabView.bottomAnchor constraintEqualToAnchor:self.contentContainer.bottomAnchor constant:-15],
-        
         [title.topAnchor constraintEqualToAnchor:self.hacksTabView.topAnchor constant:10],
         [title.leadingAnchor constraintEqualToAnchor:self.hacksTabView.leadingAnchor constant:10],
-        
         [btnStack.topAnchor constraintEqualToAnchor:title.bottomAnchor constant:10],
         [btnStack.leadingAnchor constraintEqualToAnchor:self.hacksTabView.leadingAnchor constant:10],
         [btnStack.trailingAnchor constraintEqualToAnchor:self.hacksTabView.trailingAnchor constant:-10]
@@ -431,30 +399,22 @@
 - (void)setupFloatingButton {
     SporkButton *btn = [SporkButton buttonWithType:UIButtonTypeSystem];
     btn.frame = CGRectMake(100, 100, 60, 60);
-    
     btn.backgroundColor = [UIColor clearColor]; 
     btn.layer.borderWidth = 0;
-    
     UIImageSymbolConfiguration *config = [UIImageSymbolConfiguration configurationWithPointSize:30 weight:UIImageSymbolWeightBold];
-    [btn setImage:[UIImage systemImageNamed:@"hare.fill" withConfiguration:config] forState:UIControlStateNormal];
+    [btn setImage:[UIImage imageNamed:@"hare.fill" withConfiguration:config] forState:UIControlStateNormal];
     [btn setTintColor:[UIColor whiteColor]];
-    
     btn.hidden = YES;
     [self.view addSubview:btn];
-    
     UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handleFloatPan:)];
     [btn addGestureRecognizer:pan];
-    
     [btn addTarget:self action:@selector(restoreMenu) forControlEvents:UIControlEventTouchUpInside];
-    
     self.floatingButton = btn;
 }
 
 #pragma mark - Actions
 
-- (void)sidebarTapped:(SporkButton *)sender {
-    [self switchTab:sender.tag];
-}
+- (void)sidebarTapped:(SporkButton *)sender { [self switchTab:sender.tag]; }
 
 - (void)switchTab:(NSInteger)index {
     self.homeTabView.hidden = YES;
@@ -473,23 +433,32 @@
     } completion:nil];
 }
 
-- (void)copyAction {
+// Wire up UI to C++ Executor!
+- (void)executeScriptAction {
     if (self.scriptEditor.text.length > 0) {
-        [UIPasteboard generalPasteboard].string = self.scriptEditor.text;
+        std::string sourceCode = [self.scriptEditor.text UTF8String];
+        
+        // Pass the code to the C++ Queue
+        if (SporkExecutor::QueueScript(sourceCode)) {
+            NSLog(@"[Spork UI] Script queued successfully.");
+        } else {
+            NSLog(@"[Spork UI] Failed to queue script. State not captured yet.");
+            // Show a popup if the VM hasn't loaded yet
+            UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Executor" message:@"Not ready. Wait for the game to load." preferredStyle:UIAlertControllerStyleAlert];
+            [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+            [self presentViewController:alert animated:YES completion:nil];
+        }
     }
 }
 
+- (void)copyAction {
+    if (self.scriptEditor.text.length > 0) [UIPasteboard generalPasteboard].string = self.scriptEditor.text;
+}
 - (void)pasteAction {
     NSString *pasteString = [UIPasteboard generalPasteboard].string;
-    if (pasteString) {
-        self.scriptEditor.text = [self.scriptEditor.text stringByAppendingString:pasteString];
-    }
+    if (pasteString) self.scriptEditor.text = [self.scriptEditor.text stringByAppendingString:pasteString];
 }
-
-- (void)clearAction {
-    self.scriptEditor.text = @"";
-}
-
+- (void)clearAction { self.scriptEditor.text = @""; }
 - (void)newTabAction {
     self.tabCounter++;
     self.tabLabel.text = [NSString stringWithFormat:@"Script %ld  x", (long)self.tabCounter];
@@ -504,7 +473,6 @@
         self.mainContainer.hidden = YES;
         self.mainContainer.transform = CGAffineTransformIdentity;
         self.mainContainer.alpha = 1;
-        
         self.floatingButton.hidden = NO;
         self.floatingButton.transform = CGAffineTransformMakeScale(0.1, 0.1);
         [UIView animateWithDuration:0.5 delay:0 usingSpringWithDamping:0.5 initialSpringVelocity:1.0 options:0 animations:^{
@@ -518,7 +486,6 @@
     self.mainContainer.hidden = NO;
     self.mainContainer.transform = CGAffineTransformMakeScale(0.1, 0.1);
     self.mainContainer.alpha = 0;
-    
     [UIView animateWithDuration:0.6 delay:0 usingSpringWithDamping:0.4 initialSpringVelocity:1.5 options:UIViewAnimationOptionAllowUserInteraction animations:^{
         self.mainContainer.transform = CGAffineTransformIdentity;
         self.mainContainer.alpha = 1;
@@ -537,11 +504,7 @@
         } completion:nil];
     }
     
-    // Update the constraints instead of the center property
-    self.centerXConstraint.constant += translation.x;
-    self.centerYConstraint.constant += translation.y;
-    [sender setTranslation:CGPointZero inView:self.view];
-    
+    CGPoint newCenter = CGPointMake(self.mainContainer.center.x + translation.x, self.mainContainer.center.y + translation.y);
     CGFloat speed = sqrt(velocity.x*velocity.x + velocity.y*velocity.y);
     CGFloat scale = 1.0;
     if (speed > 1000) scale = 0.92;
@@ -549,9 +512,11 @@
     else scale = 0.96;
     
     [UIView animateWithDuration:0.08 delay:0 options:UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionCurveEaseOut animations:^{
+        self.mainContainer.center = newCenter;
         self.mainContainer.transform = CGAffineTransformMakeScale(scale, scale);
-        [self.view layoutIfNeeded]; // Force layout update immediately for smooth dragging
     } completion:nil];
+    
+    [sender setTranslation:CGPointZero inView:self.view];
     
     if (sender.state == UIGestureRecognizerStateEnded || sender.state == UIGestureRecognizerStateCancelled) {
         [UIView animateWithDuration:0.6 delay:0 usingSpringWithDamping:0.35 initialSpringVelocity:speed/1000.0 options:UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionBeginFromCurrentState animations:^{
@@ -562,16 +527,11 @@
 
 - (void)handleFloatPan:(UIPanGestureRecognizer *)sender {
     CGPoint translation = [sender translationInView:self.view];
-    
     if (sender.state == UIGestureRecognizerStateBegan) {
-        [UIView animateWithDuration:0.1 animations:^{
-            self.floatingButton.transform = CGAffineTransformMakeScale(0.9, 0.9);
-        }];
+        [UIView animateWithDuration:0.1 animations:^{ self.floatingButton.transform = CGAffineTransformMakeScale(0.9, 0.9); }];
     }
-    
     self.floatingButton.center = CGPointMake(self.floatingButton.center.x + translation.x, self.floatingButton.center.y + translation.y);
     [sender setTranslation:CGPointZero inView:self.view];
-    
     if (sender.state == UIGestureRecognizerStateEnded || sender.state == UIGestureRecognizerStateCancelled) {
         [UIView animateWithDuration:0.4 delay:0 usingSpringWithDamping:0.5 initialSpringVelocity:1.0 options:UIViewAnimationOptionAllowUserInteraction animations:^{
             self.floatingButton.transform = CGAffineTransformIdentity;
