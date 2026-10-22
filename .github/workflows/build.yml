@@ -24,4 +24,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Spork-UI-Dylib
-          path: .theos/obj/debug/*.dylib
+          # Changed this line to search recursively for any .dylib file
+          path: .theos/obj/**/*.dylib
