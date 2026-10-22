@@ -32,17 +32,11 @@ static PassThroughWindow *overlayWindow = nil;
 // Hooked function for luau_load
 static int (*orig_luau_load)(structures::lua_State* L, const char* chunkname, const char* data, size_t size, int env) = nullptr;
 static int hooked_luau_load(structures::lua_State* L, const char* chunkname, const char* data, size_t size, int env) {
-    // 1. Capture the Lua State
     SporkExecutor::CaptureLuaState(L);
-    
-    // 2. Process any queued scripts from the UI
     SporkExecutor::ProcessQueue();
-    
-    // 3. Call the original function
     return orig_luau_load(L, chunkname, data, size, env);
 }
 
-// This function is now called manually from the UI
 extern "C" void injectHook() {
     NSLog(@"[Spork] Manual inject requested...");
     for (uint32_t i = 0; i < _dyld_image_count(); i++) {
@@ -51,7 +45,6 @@ extern "C" void injectHook() {
             uintptr_t base = _dyld_get_image_vmaddr_slide(i);
             uintptr_t loadAddr = base + offsets::luau::luau_load;
             
-            // If the offset is wrong, the app will crash right here
             MSHookFunction((void*)loadAddr, (void*)hooked_luau_load, (void**)&orig_luau_load);
             NSLog(@"[Spork] Hooked luau_load at %p", (void*)loadAddr);
             return;
@@ -62,11 +55,13 @@ extern "C" void injectHook() {
 
 __attribute__((constructor))
 static void init() {
-    // Initialize the Executor (resolves function pointers)
-    SporkExecutor::Initialize();
+    // REMOVED: SporkExecutor::Initialize(); from here
     
-    // Setup UI Window
+    // Setup UI Window after a delay to ensure Roblox is loaded
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        // Initialize the Executor NOW, when RobloxLib is guaranteed to be loaded
+        SporkExecutor::Initialize();
+
         if (overlayWindow) return; 
 
         UIWindowScene *activeScene = nil;
@@ -90,6 +85,8 @@ static void init() {
         SporkViewController *vc = [[SporkViewController alloc] init];
         overlayWindow.rootViewController = vc;
         overlayWindow.hidden = NO;
+        
+        // Use makeKeyAndVisible safely
         [overlayWindow makeKeyAndVisible];
         
         overlayWindow.interactableView1 = vc.mainContainer;
