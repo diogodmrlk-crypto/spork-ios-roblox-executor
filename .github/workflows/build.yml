@@ -14,6 +14,20 @@ jobs:
       - name: Install ldid
         run: brew install ldid
 
+      - name: Build Luau Static Library
+        run: |
+          # Clone Luau source
+          git clone --depth 1 https://github.com/luau-lang/luau.git
+          cd luau
+          # Create a build directory for CMake
+          mkdir build_ios && cd build_ios
+          # Configure CMake for iOS ARM64
+          cmake .. -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_BUILD_TYPE=Release -DLUAU_BUILD_CLI=OFF
+          # Build the static libraries (Luau.Compiler and Luau.VM)
+          make -j$(sysctl -n hw.ncpu)
+          # Copy the .a files to the Theos project root for linking
+          cp libLuau.Compiler.a libLuau.VM.a ${{ github.workspace }}/
+
       - name: Build Tweak
         run: |
           export THEOS=$HOME/theos
