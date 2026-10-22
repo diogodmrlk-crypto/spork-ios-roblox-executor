@@ -2,10 +2,8 @@
 #import <mach-o/dyld.h>
 #include "Executor.hpp"
 #include "offsets.h"
-// Include the real Luau compiler header
 #include "Luau/Compiler.h"
 
-// Function Pointers resolved dynamically
 static int (*orig_luau_load)(structures::lua_State* L, const char* chunkname, const char* data, size_t size, int env) = nullptr;
 static int (*lua_pcall)(structures::lua_State* L, int nargs, int nresults, int errfunc) = nullptr;
 static structures::lua_State* (*lua_newthread)(structures::lua_State* L) = nullptr;
@@ -16,11 +14,12 @@ static structures::lua_State* g_luaState = nullptr;
 static std::string g_queuedScript = "";
 static std::mutex g_queueMutex;
 
+// Corrected to return the Mach-O header base address (not the ASLR slide)
 uintptr_t getRobloxLibBase() {
     for (uint32_t i = 0; i < _dyld_image_count(); i++) {
         const char* name = _dyld_get_image_name(i);
         if (strstr(name, "RobloxLib")) {
-            return _dyld_get_image_vmaddr_slide(i);
+            return (uintptr_t)_dyld_get_image_header(i);
         }
     }
     return 0;
@@ -28,7 +27,11 @@ uintptr_t getRobloxLibBase() {
 
 void SporkExecutor::Initialize() {
     uintptr_t base = getRobloxLibBase();
-    if (!base) return;
+    if (!base) {
+        NSLog(@"[Spork] Failed to find RobloxLib base.");
+        return;
+    }
+    NSLog(@"[Spork] Found RobloxLib base at %p", (void*)base);
     
     orig_luau_load = (decltype(orig_luau_load))(base + offsets::luau::luau_load);
     lua_pcall = (decltype(lua_pcall))(base + offsets::luau::lua_pcall);
@@ -40,6 +43,7 @@ void SporkExecutor::Initialize() {
 void SporkExecutor::CaptureLuaState(structures::lua_State* L) {
     if (!g_luaState && L) {
         g_luaState = L;
+        NSLog(@"[Spork] Captured Lua State!");
     }
 }
 
@@ -65,24 +69,19 @@ void SporkExecutor::ProcessQueue() {
     std::string scriptToRun = g_queuedScript;
     g_queuedScript = ""; 
     
-    // 1. Create a clean thread
     structures::lua_State* T = lua_newthread(g_luaState);
     SetThreadIdentity(T, 7);
     
-    // 2. Compile the raw source code into Luau Bytecode
-    // We pass an empty string for the chunk name and default compile options
     std::string bytecode = Luau::compile(scriptToRun);
     
     if (bytecode.empty()) {
-        NSLog(@"[Spork] Compilation failed. Syntax error in script.");
+        NSLog(@"[Spork] Compilation failed.");
         return;
     }
     
-    // 3. Load the bytecode
     int loadStatus = orig_luau_load(T, "@Spork", bytecode.c_str(), bytecode.size(), 0);
     
     if (loadStatus == 0) {
-        // 4. Execute the script
         int pcallStatus = lua_pcall(T, 0, 0, 0);
         if (pcallStatus != 0) {
             size_t len;
