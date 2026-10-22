@@ -19,10 +19,13 @@ jobs:
           git clone --depth 1 https://github.com/luau-lang/luau.git
           cd luau
           mkdir build_ios && cd build_ios
-          cmake .. -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_BUILD_TYPE=Release -DLUAU_BUILD_CLI=OFF -DLUAU_BUILD_TESTS=OFF
+          
+          # Build for BOTH arm64 and arm64e architectures
+          cmake .. -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_ARCHITECTURES="arm64;arm64e" -DCMAKE_BUILD_TYPE=Release -DLUAU_BUILD_CLI=OFF -DLUAU_BUILD_TESTS=OFF
+          
           make -j$(sysctl -n hw.ncpu)
           
-          # Copy ALL required .a files to the project root
+          # Copy the fat libraries to the project root
           cp libLuau.Compiler.a libLuau.VM.a libLuau.Ast.a libLuau.Common.a libLuau.Bytecode.a ${{ github.workspace }}/
 
       - name: Build Tweak
