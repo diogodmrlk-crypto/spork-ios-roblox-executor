@@ -6,15 +6,23 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
+
       - name: Setup Theos
         run: |
           git clone --recursive https://github.com/theos/theos.git $HOME/theos
+
+      - name: Install ldid
+        run: brew install ldid
+
       - name: Build Tweak
         run: |
           export THEOS=$HOME/theos
+          # Tell Theos to use the Homebrew-installed ldid
+          export TARGET_CODESIGN=$(which ldid)
           make package FINALPACKAGE=1
+
       - name: Upload Dylib
-        uses: actions/upload-artifact@v4  # <--- Updated from v3 to v4
+        uses: actions/upload-artifact@v4
         with:
           name: Spork-UI-Dylib
           path: .theos/obj/debug/*.dylib
