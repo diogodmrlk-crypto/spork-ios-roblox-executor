@@ -1,5 +1,7 @@
 #import <UIKit/UIKit.h>
 #import <substrate.h>
+#include <dlfcn.h>
+#include <mach-o/dyld.h>
 #import "SporkUI.h"
 #import "Executor.hpp"
 #include "offsets.h"
