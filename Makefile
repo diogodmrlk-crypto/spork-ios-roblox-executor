@@ -7,7 +7,9 @@ include $(THEOS)/makefiles/common.mk
 TWEAK_NAME = Spork
 
 Spork_FILES = Tweak.xm SporkUI.m Executor.mm
-Spork_CFLAGS = -fobjc-arc -std=c++17 -I.
+Spork_CFLAGS = -fobjc-arc -std=c++17 -I. -Iluau/Common/include -Iluau/Compiler/include -Iluau/VM/include
 Spork_LIBRARIES = substrate
+# Link the static libraries downloaded in the GitHub action
+Spork_LDFLAGS = ./libLuau.Compiler.a ./libLuau.VM.a
 
 include $(THEOS_MAKE_PATH)/tweak.mk
