@@ -2,7 +2,7 @@
 #import <mach-o/dyld.h>
 #import <string.h>
 #import <mach/mach.h>
-#import <mach/mach_vm.h>
+#import <mach/vm_map.h> // Fixed include for Xcode 26
 #import "SporkUI.h"
 
 // --- Offsets for Roblox 2.744.0.1077 ---
@@ -44,17 +44,41 @@ typedef int (*luau_load_t)(void* L, const char* chunkname, const char* data, siz
 static void* g_L = NULL;
 bool g_is_injected = false;
 
-// Safely read memory without causing EXC_BAD_ACCESS
+// --- Logging System ---
+NSMutableArray<NSString *> *g_logs = nil;
+
+void SporkLog(NSString *format, ...) {
+    va_list args;
+    va_start(args, format);
+    NSString *msg = [[NSString alloc] initWithFormat:format arguments:args];
+    va_end(args);
+    
+    if (!g_logs) g_logs = [NSMutableArray array];
+    
+    // Timestamp
+    NSDateFormatter *formatter = [[NSDateFormatter alloc] init];
+    [formatter setDateFormat:@"HH:mm:ss"];
+    NSString *timeStr = [formatter stringFromDate:[NSDate date]];
+    
+    NSString *logLine = [NSString stringWithFormat:@"[%@] %@", timeStr, msg];
+    [g_logs addObject:logLine];
+    NSLog(@"[Spork] %@", msg);
+    
+    // Notify UI to update
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [[NSNotificationCenter defaultCenter] postNotificationName:@"SporkLogUpdated" object:nil];
+    });
+}
+
+// Safely read memory (Fixed for Xcode 26)
 bool safe_read(void* address, void* buffer, size_t size) {
     vm_size_t out_size;
-    kern_return_t kr = mach_vm_read_overwrite(mach_task_self(), (mach_vm_address_t)address, (mach_vm_size_t)size, (mach_vm_address_t)buffer, &out_size);
+    kern_return_t kr = vm_read_overwrite(mach_task_self(), (vm_address_t)address, (vm_size_t)size, (vm_address_t)buffer, &out_size);
     return (kr == KERN_SUCCESS && out_size == size);
 }
 
-// Crash-proof memory scanner for lua_State
 void* FindLuaState(void* base_ptr) {
     if (!base_ptr) return NULL;
-    // Scan up to 64KB safely
     for (int i = 0; i < 0x10000; i += 8) {
         void* ptr = NULL;
         if (!safe_read((char*)base_ptr + i, &ptr, 8)) continue;
@@ -63,7 +87,6 @@ void* FindLuaState(void* base_ptr) {
             uint8_t tt = 0;
             if (!safe_read((char*)ptr + 0x2, &tt, 1)) continue;
             
-            // LUA_TTHREAD (lua_State) is 9
             if (tt == 9) { 
                 void* global_ptr = NULL;
                 if (safe_read((char*)ptr + 0x78, &global_ptr, 8)) {
@@ -78,22 +101,24 @@ void* FindLuaState(void* base_ptr) {
 }
 
 bool InjectExecutor(void) {
+    if (g_logs) [g_logs removeAllObjects];
+    SporkLog(@"Starting Injection...");
+    
     uintptr_t base = (uintptr_t)_dyld_get_image_header(0);
     
-    // 1. Find TaskScheduler safely
     void* task_scheduler = NULL;
     if (!safe_read((void*)(base + OFFSET_TASKSCHEDULER), &task_scheduler, 8) || !task_scheduler) {
-        NSLog(@"[Spork] Failed to find TaskScheduler.");
+        SporkLog(@"Error: Failed to find TaskScheduler.");
         return false;
     }
+    SporkLog(@"Found TaskScheduler: %p", task_scheduler);
     
-    // 2. Iterate through jobs
     uintptr_t start = 0, end = 0;
     safe_read((char*)task_scheduler + OFFSET_TS_JOBS_START, &start, 8);
     safe_read((char*)task_scheduler + OFFSET_TS_JOBS_END, &end, 8);
     
     if (!start || !end || end <= start) {
-        NSLog(@"[Spork] Invalid job list pointers.");
+        SporkLog(@"Error: Invalid job list pointers.");
         return false;
     }
 
@@ -118,15 +143,16 @@ bool InjectExecutor(void) {
     }
     
     if (!job) {
-        NSLog(@"[Spork] Failed to find WaitingHybridScriptsJob.");
+        SporkLog(@"Error: WaitingHybridScriptsJob not found.");
         return false;
     }
+    SporkLog(@"Found Job: %p", job);
+    if (script_context) SporkLog(@"Found ScriptContext: %p", script_context);
     
-    // 3. Safely scan for lua_State (No more calling broken offsets!)
     if (script_context) {
         g_L = FindLuaState(script_context);
         if (g_L) {
-            NSLog(@"[Spork] Found lua_State in ScriptContext: %p", g_L);
+            SporkLog(@"Success: Found lua_State in ScriptContext: %p", g_L);
             g_is_injected = true;
             return true;
         }
@@ -134,28 +160,32 @@ bool InjectExecutor(void) {
     
     g_L = FindLuaState(job);
     if (g_L) {
-        NSLog(@"[Spork] Found lua_State in Job: %p", g_L);
+        SporkLog(@"Success: Found lua_State in Job: %p", g_L);
         g_is_injected = true;
         return true;
     }
 
-    NSLog(@"[Spork] Injection failed: Could not find lua_State.");
+    SporkLog(@"Error: Could not find lua_State in Job or ScriptContext.");
     return false;
 }
 
 void ExecuteLuauBytecode(const char* bytecode, size_t size) {
-    if (!g_is_injected || !g_L) return;
+    if (!g_is_injected || !g_L) {
+        SporkLog(@"Error: Not injected.");
+        return;
+    }
 
     uintptr_t base = (uintptr_t)_dyld_get_image_header(0);
     luau_load_t luau_load = (luau_load_t)(base + OFFSET_LUAU_LOAD);
     lua_pcall_t lua_pcall = (lua_pcall_t)(base + OFFSET_LUA_PCALL);
 
+    SporkLog(@"Executing bytecode...");
     int status = luau_load(g_L, "SporkScript", bytecode, size, 0);
     if (status == 0) {
         lua_pcall(g_L, 0, 0, 0);
-        NSLog(@"[Spork] Bytecode Executed Successfully");
+        SporkLog(@"Success: Bytecode Executed Successfully!");
     } else {
-        NSLog(@"[Spork] Bytecode Load Failed: %d", status);
+        SporkLog(@"Error: Bytecode Load Failed with status %d", status);
     }
 }
 
