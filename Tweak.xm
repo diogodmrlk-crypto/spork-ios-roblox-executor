@@ -13,13 +13,15 @@
 #define OFFSET_TS_JOBS_START      0xd0
 #define OFFSET_TS_JOBS_END        0xd8
 #define OFFSET_JOB_SCRIPT_CTX     0x1b0
-#define OFFSET_GET_GLOBAL_STATE   0x19ce768
-#define OFFSET_MAINTHREAD         0x1a0
 
 #define OFFSET_LUAU_LOAD          0x44bc110
 #define OFFSET_LUA_PCALL          0x4490fec
-#define OFFSET_LUA_GETTOP         0x448e048
-#define OFFSET_LUA_SETTOP         0x448e05c
+#define OFFSET_LUA_NEWTHREAD      0x448df3c
+#define OFFSET_LUAL_SANDBOXTHREAD 0x1a12ad4
+
+// ScriptContext decryption offset and lua_State tt offset
+#define OFFSET_SCRIPT_CONTEXT_LUA_STATE_ARRAY 0x2B8
+#define OFFSET_LUA_STATE_TT                   0x2
 
 // --- Pass-Through Window ---
 @interface PassThroughWindow : UIWindow
@@ -47,10 +49,11 @@ static PassThroughWindow *overlayWindow = nil;
 // --- Executor Logic ---
 typedef int (*lua_pcall_t)(void* L, int nargs, int nresults, int errfunc);
 typedef int (*luau_load_t)(void* L, const char* chunkname, const char* data, size_t size, int env);
-typedef void* (*get_global_state_t)(void* sc);
+typedef void* (*lua_newthread_t)(void* L);
+typedef void (*luaL_sandboxthread_t)(void* L);
 
 bool g_is_injected = false;
-int g_execution_method = 4; // Default to Method 4 (Raw Pcall) as it's the most stable
+int g_execution_method = 2; // Hardcoded to Method 2 (New Thread)
 static NSMutableArray<NSString *> *g_scriptQueue = nil;
 static const char* g_current_script_source = NULL;
 static size_t g_current_script_size = 0;
@@ -122,50 +125,62 @@ void my_job_step(void* job) {
         if (safe_read((char*)job + OFFSET_JOB_SCRIPT_CTX, &script_context, 8) && script_context) {
             script_context = (void*)STRIP_PAC(script_context);
             
-            // Get global state directly using the dumped offset
-            get_global_state_t get_global_state = (get_global_state_t)(base + OFFSET_GET_GLOBAL_STATE);
-            void* global_state = get_global_state(script_context);
+            // Decrypt the lua_State pointer
+            uintptr_t ctx_addr = (uintptr_t)script_context;
+            uintptr_t encrypted_array_addr = ctx_addr + OFFSET_SCRIPT_CONTEXT_LUA_STATE_ARRAY;
             
-            void* live_L = NULL;
-            if (global_state) {
-                safe_read((char*)global_state + OFFSET_MAINTHREAD, &live_L, 8);
-            }
-            
-            if (live_L) {
-                g_find_fail_count = 0;
-                NSString *script = g_scriptQueue.firstObject;
-                [g_scriptQueue removeObjectAtIndex:0];
+            uint32_t encrypted[2] = {0, 0};
+            if (safe_read((void*)encrypted_array_addr, &encrypted, sizeof(encrypted))) {
+                uint32_t low  = (uint32_t)encrypted_array_addr - encrypted[0];
+                uint32_t high = (uint32_t)encrypted_array_addr - encrypted[1];
+                uintptr_t lua_state_ptr = ((uint64_t)high << 32) | low;
+                void* live_L = (void*)lua_state_ptr;
                 
-                g_current_script_source = [script UTF8String];
-                g_current_script_size = strlen(g_current_script_source);
-                
-                luau_load_t luau_load = (luau_load_t)(base + OFFSET_LUAU_LOAD);
-                lua_pcall_t lua_pcall = (lua_pcall_t)(base + OFFSET_LUA_PCALL);
-                
-                SporkLog(@"Hook fired! L: %p | Method: %d", live_L, g_execution_method);
-                
-                in_hook_exec = 1;
-                int sig = sigsetjmp(hook_jump_buffer, 1);
-                
-                if (sig == 0) {
-                    // Method 4 is the most reliable. It uses env=0 which tells Luau to use the thread's current environment.
-                    int status = luau_load(live_L, "SporkScript", g_current_script_source, g_current_script_size, 0);
-                    if (status == 0) {
-                        lua_pcall(live_L, 0, 0, 0);
-                        SporkLog(@"Script executed successfully!");
-                    } else {
-                        SporkLog(@"luau_load failed. Status: %d", status);
-                    }
+                // Verify it's actually a thread (tt == 9 at offset 0x2)
+                uint8_t tt = 0;
+                if (safe_read((char*)live_L + OFFSET_LUA_STATE_TT, &tt, 1) && tt == 9) {
+                    g_find_fail_count = 0;
+                    NSString *script = g_scriptQueue.firstObject;
+                    [g_scriptQueue removeObjectAtIndex:0];
                     
-                    in_hook_exec = 0;
+                    g_current_script_source = [script UTF8String];
+                    g_current_script_size = strlen(g_current_script_source);
+                    
+                    luau_load_t luau_load = (luau_load_t)(base + OFFSET_LUAU_LOAD);
+                    lua_pcall_t lua_pcall = (lua_pcall_t)(base + OFFSET_LUA_PCALL);
+                    lua_newthread_t lua_newthread = (lua_newthread_t)(base + OFFSET_LUA_NEWTHREAD);
+                    luaL_sandboxthread_t luaL_sandboxthread = (luaL_sandboxthread_t)(base + OFFSET_LUAL_SANDBOXTHREAD);
+                    
+                    SporkLog(@"Hook fired! live_L: %p", live_L);
+                    
+                    in_hook_exec = 1;
+                    int sig = sigsetjmp(hook_jump_buffer, 1);
+                    
+                    if (sig == 0) {
+                        // Create a new thread to prevent deadlocking the main thread
+                        void* new_L = lua_newthread(live_L);
+                        if (new_L) {
+                            luaL_sandboxthread(new_L);
+                            int status = luau_load(new_L, "SporkScript", g_current_script_source, g_current_script_size, 0);
+                            if (status == 0) {
+                                lua_pcall(new_L, 0, 0, 0);
+                                SporkLog(@"Executed successfully!");
+                            } else {
+                                SporkLog(@"luau_load failed. Status: %d", status);
+                            }
+                        } else {
+                            SporkLog(@"lua_newthread returned NULL.");
+                        }
+                        in_hook_exec = 0;
+                    } else {
+                        in_hook_exec = 0;
+                        SporkLog(@"HOOK CRASH CAUGHT: Signal %d", sig);
+                    }
                 } else {
-                    in_hook_exec = 0;
-                    SporkLog(@"HOOK CRASH CAUGHT: Signal %d", sig);
-                }
-            } else {
-                g_find_fail_count++;
-                if (g_find_fail_count == 1 || g_find_fail_count % 60 == 0) {
-                    SporkLog(@"Waiting for global state to be ready... (attempt %d)", g_find_fail_count);
+                    g_find_fail_count++;
+                    if (g_find_fail_count == 1 || g_find_fail_count % 60 == 0) {
+                        SporkLog(@"Found pointer, but not a thread (tt=%d). Retrying...", tt);
+                    }
                 }
             }
         }
