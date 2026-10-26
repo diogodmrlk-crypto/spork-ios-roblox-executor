@@ -33,8 +33,10 @@ extern bool g_is_injected;
 @property (nonatomic, strong) UIView *editorTabView;
 @property (nonatomic, strong) UIView *homeTabView;
 @property (nonatomic, strong) UIView *hacksTabView;
+@property (nonatomic, strong) UIView *logsTabView; // New Logs Tab
 
 @property (nonatomic, strong) UITextView *scriptEditor;
+@property (nonatomic, strong) UITextView *logsTextView; // New Logs Text View
 @property (nonatomic, strong) UILabel *tabLabel;
 @property (nonatomic) NSInteger tabCounter;
 
@@ -54,9 +56,22 @@ extern bool g_is_injected;
     [self setupEditorTab];
     [self setupHomeTab];
     [self setupHacksTab];
+    [self setupLogsTab]; // Setup Logs
     [self setupFloatingButton];
     
-    [self switchTab:1]; // Default to Home Tab
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(updateLogs) name:@"SporkLogUpdated" object:nil];
+    
+    [self switchTab:1]; 
+}
+
+- (void)updateLogs {
+    if (self.logsTextView && g_logs) {
+        self.logsTextView.text = [g_logs componentsJoinedByString:@"\n"];
+        if (self.logsTextView.text.length > 0) {
+            NSRange bottom = NSMakeRange(self.logsTextView.text.length - 1, 1);
+            [self.logsTextView scrollRangeToVisible:bottom];
+        }
+    }
 }
 
 - (void)setupMainContainer {
@@ -162,11 +177,12 @@ extern bool g_is_injected;
     self.sidebar.layer.maskedCorners = kCALayerMinXMinYCorner | kCALayerMinXMaxYCorner;
     [self.mainContainer addSubview:self.sidebar];
 
-    NSArray *icons = @[@"doc.text.fill", @"house.fill", @"bolt.fill", @"chevron.left.forwardslash.chevron.right", @"doc.on.clipboard"];
+    // Added "list.bullet.rectangle" for Logs
+    NSArray *icons = @[@"doc.text.fill", @"house.fill", @"bolt.fill", @"chevron.left.forwardslash.chevron.right", @"doc.on.clipboard", @"list.bullet.rectangle"];
     UIStackView *stack = [[UIStackView alloc] init];
     stack.translatesAutoresizingMaskIntoConstraints = NO;
     stack.axis = UILayoutConstraintAxisVertical;
-    stack.spacing = 25;
+    stack.spacing = 20;
     stack.alignment = UIStackViewAlignmentCenter;
     [self.sidebar addSubview:stack];
 
@@ -195,7 +211,7 @@ extern bool g_is_injected;
         [self.sidebar.leadingAnchor constraintEqualToAnchor:self.mainContainer.leadingAnchor],
         [self.sidebar.bottomAnchor constraintEqualToAnchor:self.mainContainer.bottomAnchor],
         [self.sidebar.widthAnchor constraintEqualToConstant:60],
-        [stack.topAnchor constraintEqualToAnchor:self.sidebar.topAnchor constant:30],
+        [stack.topAnchor constraintEqualToAnchor:self.sidebar.topAnchor constant:25],
         [stack.centerXAnchor constraintEqualToAnchor:self.sidebar.centerXAnchor],
         [self.selectionIndicator.leadingAnchor constraintEqualToAnchor:self.sidebar.leadingAnchor],
         [self.selectionIndicator.topAnchor constraintEqualToAnchor:stack.topAnchor],
@@ -402,6 +418,43 @@ extern bool g_is_injected;
     ]];
 }
 
+- (void)setupLogsTab {
+    [self setupContentContainer];
+    self.logsTabView = [[UIView alloc] init];
+    self.logsTabView.translatesAutoresizingMaskIntoConstraints = NO;
+    self.logsTabView.hidden = YES;
+    [self.contentContainer addSubview:self.logsTabView];
+    
+    UILabel *title = [[UILabel alloc] init];
+    title.translatesAutoresizingMaskIntoConstraints = NO;
+    title.text = @"Executor Logs";
+    title.textColor = [UIColor whiteColor];
+    title.font = [UIFont boldSystemFontOfSize:16];
+    [self.logsTabView addSubview:title];
+    
+    self.logsTextView = [[UITextView alloc] init];
+    self.logsTextView.translatesAutoresizingMaskIntoConstraints = NO;
+    self.logsTextView.backgroundColor = [UIColor colorWithRed:0.08 green:0.08 blue:0.08 alpha:1.0];
+    self.logsTextView.textColor = [UIColor greenColor];
+    self.logsTextView.font = [UIFont fontWithName:@"Menlo" size:11];
+    self.logsTextView.editable = NO;
+    self.logsTextView.layer.cornerRadius = 6;
+    [self.logsTabView addSubview:self.logsTextView];
+    
+    [NSLayoutConstraint activateConstraints:@[
+        [self.logsTabView.topAnchor constraintEqualToAnchor:self.contentContainer.topAnchor constant:15],
+        [self.logsTabView.leadingAnchor constraintEqualToAnchor:self.contentContainer.leadingAnchor constant:15],
+        [self.logsTabView.trailingAnchor constraintEqualToAnchor:self.contentContainer.trailingAnchor constant:-15],
+        [self.logsTabView.bottomAnchor constraintEqualToAnchor:self.contentContainer.bottomAnchor constant:-15],
+        [title.topAnchor constraintEqualToAnchor:self.logsTabView.topAnchor constant:10],
+        [title.leadingAnchor constraintEqualToAnchor:self.logsTabView.leadingAnchor constant:10],
+        [self.logsTextView.topAnchor constraintEqualToAnchor:title.bottomAnchor constant:10],
+        [self.logsTextView.leadingAnchor constraintEqualToAnchor:self.logsTabView.leadingAnchor constant:10],
+        [self.logsTextView.trailingAnchor constraintEqualToAnchor:self.logsTabView.trailingAnchor constant:-10],
+        [self.logsTextView.bottomAnchor constraintEqualToAnchor:self.logsTabView.bottomAnchor]
+    ]];
+}
+
 - (void)setupFloatingButton {
     SporkButton *btn = [SporkButton buttonWithType:UIButtonTypeSystem];
     btn.frame = CGRectMake(100, 100, 60, 60);
@@ -424,16 +477,18 @@ extern bool g_is_injected;
     self.homeTabView.hidden = YES;
     self.hacksTabView.hidden = YES;
     self.editorTabView.hidden = YES;
+    self.logsTabView.hidden = YES;
     
     if (index == 0) self.editorTabView.hidden = NO;
     else if (index == 1) self.homeTabView.hidden = NO;
     else if (index == 2) self.hacksTabView.hidden = NO;
     else if (index == 3) self.editorTabView.hidden = NO;
-    else self.editorTabView.hidden = NO;
+    else if (index == 4) self.editorTabView.hidden = NO;
+    else if (index == 5) self.logsTabView.hidden = NO;
     
     SporkButton *selectedBtn = self.sidebarButtons[index];
     [UIView animateWithDuration:0.3 delay:0 usingSpringWithDamping:0.7 initialSpringVelocity:0.5 options:UIViewAnimationOptionAllowUserInteraction animations:^{
-        self.selectionIndicator.center = CGPointMake(self.selectionIndicator.center.x, selectedBtn.center.y + 30);
+        self.selectionIndicator.center = CGPointMake(self.selectionIndicator.center.x, selectedBtn.center.y + 25);
     } completion:nil];
 }
 
@@ -445,7 +500,7 @@ extern bool g_is_injected;
         [self.injectBtn setTitle:@"Injected" forState:UIControlStateNormal];
         self.injectBtn.enabled = NO;
     } else {
-        self.statusLabel.text = @"Injection Failed (Try again in-game)";
+        self.statusLabel.text = @"Injection Failed (Check Logs tab!)";
         self.statusLabel.textColor = [UIColor redColor];
     }
 }
