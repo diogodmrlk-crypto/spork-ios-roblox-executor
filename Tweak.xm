@@ -65,7 +65,6 @@ void SporkLog(NSString *format, ...) {
     });
 }
 
-// Strip PAC (Pointer Authentication Code) for arm64e
 #define STRIP_PAC(ptr) ((uintptr_t)(ptr) & 0x0000000FFFFFFFFF)
 
 bool safe_read(void* address, void* buffer, size_t size) {
@@ -88,34 +87,26 @@ uintptr_t get_robloxlib_base(void) {
     return 0;
 }
 
-// Extremely strict lua_State finder
+// Bulletproof lua_State finder using a circular reference check
 void* FindLuaState(void* base_ptr) {
     if (!base_ptr) return NULL;
     uintptr_t base = STRIP_PAC(base_ptr);
     
-    for (int i = 0; i < 0x4000; i += 8) {
+    for (int i = 0; i < 0x100000; i += 8) { // Scan 1MB
         void* ptr = NULL;
         if (!safe_read((void*)(base + i), &ptr, 8)) continue;
         
         uintptr_t stripped_ptr = STRIP_PAC(ptr);
-        // Real lua_State addresses on iOS are usually in the 0x100000000 - 0x400000000 range
-        if (stripped_ptr > 0x100000000 && stripped_ptr < 0x400000000) {
-            uint8_t tt = 0;
-            if (!safe_read((void*)(stripped_ptr + 0x2), &tt, 1)) continue;
-            
-            if (tt == 9) { // LUA_TTHREAD
-                void* global_ptr = NULL;
-                if (!safe_read((void*)(stripped_ptr + 0x78), &global_ptr, 8)) continue;
-                
+        if (stripped_ptr > 0x100000000 && stripped_ptr < 0x8000000000) {
+            void* global_ptr = NULL;
+            if (safe_read((void*)(stripped_ptr + 0x78), &global_ptr, 8)) {
                 uintptr_t stripped_global = STRIP_PAC(global_ptr);
-                if (stripped_global > 0x100000000 && stripped_global < 0x400000000) {
-                    // Verify global_State->mainthread points back to a valid lua_State
+                if (stripped_global > 0x100000000 && stripped_global < 0x8000000000) {
                     void* mainthread = NULL;
                     if (safe_read((void*)(stripped_global + 0x1a0), &mainthread, 8)) {
-                        uintptr_t stripped_mt = STRIP_PAC(mainthread);
-                        if (stripped_mt > 0x100000000 && stripped_mt < 0x400000000) {
-                            uint8_t mt_tt = 0;
-                            if (safe_read((void*)(stripped_mt + 0x2), &mt_tt, 1) && mt_tt == 9) {
+                        if (STRIP_PAC(mainthread) == stripped_ptr) {
+                            uint8_t tt;
+                            if (safe_read((void*)(stripped_ptr + 0x2), &tt, 1) && tt == 9) {
                                 return (void*)stripped_ptr;
                             }
                         }
@@ -168,18 +159,32 @@ bool InjectExecutor(void) {
         if (safe_read((char*)stripped_j + OFFSET_JOB_SCRIPT_CTX, &script_context, 8) && script_context) {
             script_context = (void*)STRIP_PAC(script_context);
             
+            // Strategy 1: Scan ScriptContext
             g_L = FindLuaState(script_context);
             if (g_L) {
-                SporkLog(@"Success: Found real lua_State in ScriptContext: %p", g_L);
+                SporkLog(@"Success: Found lua_State in ScriptContext: %p", g_L);
                 g_is_injected = true;
                 return true;
             }
             
+            // Strategy 2: Scan Job
             g_L = FindLuaState((void*)stripped_j);
             if (g_L) {
-                SporkLog(@"Success: Found real lua_State in Job: %p", g_L);
+                SporkLog(@"Success: Found lua_State in Job: %p", g_L);
                 g_is_injected = true;
                 return true;
+            }
+            
+            // Strategy 3: Check DataModel (ScriptContext + 0x60)
+            void* data_model = NULL;
+            if (safe_read((char*)script_context + 0x60, &data_model, 8) && data_model) {
+                data_model = (void*)STRIP_PAC(data_model);
+                g_L = FindLuaState(data_model);
+                if (g_L) {
+                    SporkLog(@"Success: Found lua_State in DataModel: %p", g_L);
+                    g_is_injected = true;
+                    return true;
+                }
             }
         }
     }
