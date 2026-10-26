@@ -91,15 +91,14 @@ int my_lua_pcall(void* L, int nargs, int nresults, int errfunc) {
         
         SporkLog(@"Hook triggered! Creating safe coroutine...");
         
-        // Create a new thread INSIDE the hook (this is now safe because we are on the engine thread)
         void* new_L = lua_newthread(L);
         if (new_L) {
-            luaL_sandboxthread(new_L); // Give it the game environment
+            luaL_sandboxthread(new_L);
             
             const char *source = [script UTF8String];
             int status = luau_load(new_L, "SporkScript", source, strlen(source), 0);
             if (status == 0) {
-                orig_lua_pcall(new_L, 0, 0, 0); // Execute our script
+                orig_lua_pcall(new_L, 0, 0, 0);
                 SporkLog(@"Success: LocalScript executed!");
             } else {
                 SporkLog(@"Error: Compile/Load Failed with status %d", status);
@@ -107,7 +106,6 @@ int my_lua_pcall(void* L, int nargs, int nresults, int errfunc) {
         }
     }
     
-    // Continue the game's original execution safely
     return orig_lua_pcall(L, nargs, nresults, errfunc);
 }
 
@@ -121,18 +119,22 @@ bool InjectExecutor(void) {
         return false;
     }
 
-    // Strip PAC from function pointers (essential for arm64e)
     void* target_pcall = (void*)(base + OFFSET_LUA_PCALL);
-    void* stripped_target = __builtin_ptrauth_strip(target_pcall, ptrauth_key_asia);
-    void* stripped_hook = __builtin_ptrauth_strip((void*)my_lua_pcall, ptrauth_key_asia);
+    void* stripped_target = target_pcall;
+    void* stripped_hook = (void*)my_lua_pcall;
+
+    // Only strip PAC if the target supports Pointer Authentication (arm64e)
+#if defined(__arm64e__) && __has_feature(ptrauth_calls)
+    stripped_target = __builtin_ptrauth_strip(target_pcall, ptrauth_key_asia);
+    stripped_hook = __builtin_ptrauth_strip((void*)my_lua_pcall, ptrauth_key_asia);
+#endif
     
-    // Install the hook using Dobby
     int ret = DobbyHook(stripped_target, stripped_hook, (void**)&orig_lua_pcall);
     
     if (ret == 0) {
-        // Re-sign the original function pointer so it can be called normally
+#if defined(__arm64e__) && __has_feature(ptrauth_calls)
         orig_lua_pcall = (lua_pcall_t)ptrauth_sign_unauthenticated((void*)orig_lua_pcall, ptrauth_key_asia, 0);
-        
+#endif
         SporkLog(@"Success: Hooked lua_pcall!");
         g_is_injected = true;
         return true;
