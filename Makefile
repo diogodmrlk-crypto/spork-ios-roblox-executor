@@ -14,10 +14,10 @@ DOBBY_INCLUDES = $(addprefix -I, $(shell find Dobby -type d))
 
 Spork_FILES = Tweak.xm SporkUI.mm $(DOBBY_SRC)
 
-# Add all Dobby includes and suppress the Xcode 26 module error
+# ONLY apply Dobby includes to C++ files. Do NOT apply to Obj-C files.
 Spork_CCFLAGS = -std=c++14 -fno-exceptions -fno-rtti $(DOBBY_INCLUDES) -Wno-module-import-in-extern-c
-Spork_OBJCFLAGS = -fobjc-arc $(DOBBY_INCLUDES) -Wno-module-import-in-extern-c
-Spork_OBJCCFLAGS = -fobjc-arc $(DOBBY_INCLUDES) -Wno-module-import-in-extern-c
+Spork_OBJCFLAGS = -fobjc-arc -Wno-module-import-in-extern-c
+Spork_OBJCCFLAGS = -fobjc-arc -Wno-module-import-in-extern-c
 
 # Link the C++ standard library
 Spork_LIBRARIES = c++
