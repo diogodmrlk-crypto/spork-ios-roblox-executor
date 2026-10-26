@@ -87,7 +87,6 @@ uintptr_t get_robloxlib_base(void) {
     return 0;
 }
 
-// Robust lua_State finder
 void* FindLuaState(void* base_ptr) {
     if (!base_ptr) return NULL;
     uintptr_t base = STRIP_PAC(base_ptr);
@@ -119,7 +118,7 @@ void* FindLuaState(void* base_ptr) {
                     if (totalbytes > 0 && totalbytes < 0x80000000 &&
                         STRIP_PAC(stack_ptr) > 0x100000000 &&
                         stacksize > 0 && stacksize < 1000000) {
-                        return ptr; // RETURN SIGNED POINTER (Fix for EXC_BAD_ACCESS)
+                        return ptr;
                     }
                 }
             }
@@ -189,24 +188,24 @@ bool InjectExecutor(void) {
     return false;
 }
 
-void ExecuteLuauBytecode(const char* bytecode, size_t size) {
+// Changed to accept source code instead of bytecode
+void ExecuteLuauSource(const char* source, size_t size) {
     if (!g_is_injected || !g_L) {
         SporkLog(@"Error: Not injected.");
         return;
     }
 
     uintptr_t base = get_robloxlib_base();
-    // Fix: Do not strip PAC from RobloxLib function pointers
     luau_load_t luau_load = (luau_load_t)(base + OFFSET_LUAU_LOAD);
     lua_pcall_t lua_pcall = (lua_pcall_t)(base + OFFSET_LUA_PCALL);
 
-    SporkLog(@"Executing bytecode...");
-    int status = luau_load(g_L, "SporkScript", bytecode, size, 0);
+    SporkLog(@"Compiling and executing source...");
+    int status = luau_load(g_L, "SporkScript", source, size, 0);
     if (status == 0) {
         lua_pcall(g_L, 0, 0, 0);
-        SporkLog(@"Success: Bytecode Executed Successfully!");
+        SporkLog(@"Success: Source Executed Successfully!");
     } else {
-        SporkLog(@"Error: Bytecode Load Failed with status %d", status);
+        SporkLog(@"Error: Compile/Load Failed with status %d", status);
     }
 }
 
