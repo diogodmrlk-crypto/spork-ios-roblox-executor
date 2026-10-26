@@ -13,8 +13,6 @@
 #define OFFSET_JOB_SCRIPT_CTX     0x1b0
 #define OFFSET_LUAU_LOAD          0x44bc110
 #define OFFSET_LUA_PCALL          0x4490fec
-#define OFFSET_LUA_PUSHCCLOSUREK  0x448f9fc
-#define OFFSET_SPAWN              0x19a56ec
 
 // --- Pass-Through Window ---
 @interface PassThroughWindow : UIWindow
@@ -42,14 +40,10 @@ static PassThroughWindow *overlayWindow = nil;
 // --- Executor Logic ---
 typedef int (*lua_pcall_t)(void* L, int nargs, int nresults, int errfunc);
 typedef int (*luau_load_t)(void* L, const char* chunkname, const char* data, size_t size, int env);
-typedef void (*lua_pushcclosurek_t)(void* L, void* fn, const char* debugname, int nup, void* cont);
-typedef void (*spawn_t)(void* L);
 
 static void* g_L = NULL;
 bool g_is_injected = false;
 static NSMutableArray<NSString *> *g_scriptQueue = nil;
-static const char* g_current_script_source = NULL;
-static size_t g_current_script_size = 0;
 
 static void* orig_job_step = NULL;
 
@@ -97,7 +91,6 @@ uintptr_t get_robloxlib_base(void) {
     return 0;
 }
 
-// Bounded scanner to completely eliminate 0x7100... and 0xf940... false positives
 void* FindLuaState(void* base_ptr) {
     if (!base_ptr) return NULL;
     uintptr_t base = STRIP_PAC(base_ptr);
@@ -107,7 +100,6 @@ void* FindLuaState(void* base_ptr) {
         if (!safe_read((void*)(base + i), &ptr, 8)) continue;
         
         uintptr_t stripped_ptr = STRIP_PAC(ptr);
-        // The strict bounds check: iOS heap is between 0x100000000 and 0x400000000
         if (stripped_ptr > 0x100000000 && stripped_ptr < 0x400000000) {
             uint8_t tt = 0;
             if (!safe_read((void*)(stripped_ptr + 0x2), &tt, 1)) continue;
@@ -132,41 +124,27 @@ void* FindLuaState(void* base_ptr) {
     return NULL;
 }
 
-// The C function that runs the script safely on the engine thread
-int my_script_runner(void* L) {
-    uintptr_t base = get_robloxlib_base();
-    luau_load_t luau_load = (luau_load_t)(base + OFFSET_LUAU_LOAD);
-    lua_pcall_t lua_pcall = (lua_pcall_t)(base + OFFSET_LUA_PCALL);
-
-    SporkLog(@"Running script on engine thread...");
-    int status = luau_load(L, "SporkScript", g_current_script_source, g_current_script_size, 0);
-    if (status == 0) {
-        lua_pcall(L, 0, 0, 0);
-        SporkLog(@"Success: Script executed!");
-    } else {
-        SporkLog(@"Error: Compile/Load Failed with status %d", status);
-    }
-    return 0;
-}
-
 // --- VTable Hook for Job::step ---
 void my_job_step(void* job) {
     if (g_scriptQueue && g_scriptQueue.count > 0 && g_L) {
         NSString *script = g_scriptQueue.firstObject;
         [g_scriptQueue removeObjectAtIndex:0];
         
-        g_current_script_source = [script UTF8String];
-        g_current_script_size = strlen(g_current_script_source);
-
         uintptr_t base = get_robloxlib_base();
-        lua_pushcclosurek_t lua_pushcclosurek = (lua_pushcclosurek_t)(base + OFFSET_LUA_PUSHCCLOSUREK);
-        spawn_t spawn = (spawn_t)(base + OFFSET_SPAWN);
-
-        SporkLog(@"Job::step hooked! Spawning script...");
+        luau_load_t luau_load = (luau_load_t)(base + OFFSET_LUAU_LOAD);
+        lua_pcall_t lua_pcall = (lua_pcall_t)(base + OFFSET_LUA_PCALL);
         
-        // Push our C function and let Roblox spawn it safely
-        lua_pushcclosurek(g_L, (void*)my_script_runner, "SporkRunner", 0, NULL);
-        spawn(g_L);
+        SporkLog(@"Job::step hooked! Executing script...");
+        const char *source = [script UTF8String];
+        
+        // Direct execution on the engine thread
+        int status = luau_load(g_L, "SporkScript", source, strlen(source), 0);
+        if (status == 0) {
+            lua_pcall(g_L, 0, 0, 0);
+            SporkLog(@"Success: Script executed!");
+        } else {
+            SporkLog(@"Error: Compile/Load Failed with status %d", status);
+        }
     }
     
     // Call the original step function
