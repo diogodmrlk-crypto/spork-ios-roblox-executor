@@ -3,20 +3,16 @@
 #import <string.h>
 #import <mach/mach.h>
 #import <mach/vm_map.h>
-#import <signal.h>
-#import <setjmp.h>
-#import <libkern/OSCacheControl.h>
+#import <stdlib.h>
 #import "SporkUI.h"
 
-// Forward declare mach_vm_remap
-extern "C" kern_return_t mach_vm_remap(vm_map_t target_task, uint64_t *target_address, uint64_t size, uint64_t mask, int flags, vm_map_t src_task, uint64_t src_address, boolean_t copy, vm_prot_t *cur_protection, vm_prot_t *max_protection, vm_inherit_t inheritance);
-
 // --- Offsets for Roblox 2.744.0.1077 (Relative to RobloxLib) ---
-#define OFFSET_LUA_PCALL          0x4490fec
+#define OFFSET_TASKSCHEDULER      0x6a6d7c0
+#define OFFSET_TS_JOBS_START      0xd0
+#define OFFSET_TS_JOBS_END        0xd8
+#define OFFSET_JOB_SCRIPT_CTX     0x1b0
 #define OFFSET_LUAU_LOAD          0x44bc110
-#define OFFSET_LUA_GETTOP         0x448e048
-#define OFFSET_LUA_SETTOP         0x448e05c
-#define OFFSET_SPAWN              0x19a56ec
+#define OFFSET_LUA_PCALL          0x4490fec
 
 // --- Pass-Through Window ---
 @interface PassThroughWindow : UIWindow
@@ -44,15 +40,12 @@ static PassThroughWindow *overlayWindow = nil;
 // --- Executor Logic ---
 typedef int (*lua_pcall_t)(void* L, int nargs, int nresults, int errfunc);
 typedef int (*luau_load_t)(void* L, const char* chunkname, const char* data, size_t size, int env);
-typedef int (*lua_gettop_t)(void* L);
-typedef void (*lua_settop_t)(void* L, int idx);
-typedef void (*spawn_t)(void* L);
 
+static void* g_L = NULL;
 bool g_is_injected = false;
 static NSMutableArray<NSString *> *g_scriptQueue = nil;
 
-// Hook Trampoline
-static lua_pcall_t orig_lua_pcall = NULL;
+static void* orig_job_step = NULL;
 
 // --- Logging System ---
 NSMutableArray<NSString *> *g_logs = nil;
@@ -76,6 +69,17 @@ void SporkLog(NSString *format, ...) {
     });
 }
 
+#define STRIP_PAC(ptr) ((uintptr_t)(ptr) & 0x0000000FFFFFFFFF)
+
+bool safe_read(void* address, void* buffer, size_t size) {
+    uintptr_t addr = STRIP_PAC(address);
+    if (addr < 0x100000000 || addr > 0x8000000000) return false;
+    
+    vm_size_t out_size;
+    kern_return_t kr = vm_read_overwrite(mach_task_self(), (vm_address_t)addr, (vm_size_t)size, (vm_address_t)buffer, &out_size);
+    return (kr == KERN_SUCCESS && out_size == size);
+}
+
 uintptr_t get_robloxlib_base(void) {
     uint32_t count = _dyld_image_count();
     for (uint32_t i = 0; i < count; i++) {
@@ -87,92 +91,65 @@ uintptr_t get_robloxlib_base(void) {
     return 0;
 }
 
-// --- The Safe Mach VM Remap Hook ---
-void install_hook(void* target, void* hook) {
-    kern_return_t kr;
-    uint64_t page = (uint64_t)target & ~0x3FFF; // 16KB page alignment
-    uint64_t new_page = 0;
-    vm_prot_t cur_prot, max_prot;
-
-    // 1. Map a copy of the page
-    kr = mach_vm_remap(mach_task_self(), &new_page, 0x4000, 0, VM_FLAGS_ANYWHERE, mach_task_self(), page, false, &cur_prot, &max_prot, VM_INHERIT_NONE);
-    if (kr != KERN_SUCCESS) {
-        SporkLog(@"mach_vm_remap failed: %d", kr);
-        return;
+// The exact scanner that successfully found the L in your earlier logs
+void* FindLuaState(void* base_ptr) {
+    if (!base_ptr) return NULL;
+    uintptr_t base = STRIP_PAC(base_ptr);
+    
+    for (int i = 0; i < 0x200000; i += 8) {
+        void* ptr = NULL;
+        if (!safe_read((void*)(base + i), &ptr, 8)) continue;
+        
+        uintptr_t stripped_ptr = STRIP_PAC(ptr);
+        if (stripped_ptr > 0x100000000 && stripped_ptr < 0x8000000000) {
+            uint8_t tt = 0;
+            if (!safe_read((void*)(stripped_ptr + 0x2), &tt, 1)) continue;
+            
+            if (tt == 9) { // LUA_TTHREAD
+                void* global_ptr = NULL;
+                if (!safe_read((void*)(stripped_ptr + 0x78), &global_ptr, 8)) continue;
+                
+                uintptr_t stripped_global = STRIP_PAC(global_ptr);
+                if (stripped_global > 0x100000000 && stripped_global < 0x8000000000) {
+                    void* mainthread = NULL;
+                    if (safe_read((void*)(stripped_global + 0x1a0), &mainthread, 8)) {
+                        if (STRIP_PAC(mainthread) > 0x100000000) {
+                            return mainthread;
+                        }
+                    }
+                }
+            }
+        }
     }
-
-    // 2. Make it writable
-    kr = vm_protect(mach_task_self(), (vm_address_t)new_page, 0x4000, false, VM_PROT_READ | VM_PROT_WRITE | VM_PROT_EXECUTE);
-    if (kr != KERN_SUCCESS) {
-        SporkLog(@"vm_protect failed: %d", kr);
-        return;
-    }
-
-    uintptr_t offset = (uintptr_t)target - page;
-    void* new_target = (void*)(new_page + offset);
-
-    // 3. Create trampoline inside the remapped page to avoid iOS JIT restrictions
-    void* trampoline = (void*)(new_page + 0x3F00); 
-    
-    // Copy original 16 bytes to trampoline
-    memcpy(trampoline, new_target, 16);
-    
-    // Append jump back to original function
-    uint32_t* tramp_code = (uint32_t*)((uintptr_t)trampoline + 16);
-    tramp_code[0] = 0x58000050; // ldr x16, #8
-    tramp_code[1] = 0xD61F0200; // br x16
-    *(uint64_t*)((uintptr_t)trampoline + 24) = (uintptr_t)target + 16;
-
-    orig_lua_pcall = (lua_pcall_t)trampoline;
-
-    // 4. Patch the target with jump to our hook
-    uint32_t* target_code = (uint32_t*)new_target;
-    target_code[0] = 0x58000050; // ldr x16, #8
-    target_code[1] = 0xD61F0200; // br x16
-    *(uint64_t*)((uintptr_t)new_target + 8) = (uintptr_t)hook;
-
-    // 5. Change permissions back to RX
-    vm_protect(mach_task_self(), (vm_address_t)new_page, 0x4000, false, VM_PROT_READ | VM_PROT_EXECUTE);
-    
-    // 6. Remap back over the original location
-    uint64_t dummy = 0;
-    kr = mach_vm_remap(mach_task_self(), &dummy, 0x4000, 0, VM_FLAGS_FIXED | VM_FLAGS_OVERWRITE, mach_task_self(), new_page, false, &cur_prot, &max_prot, VM_INHERIT_NONE);
-    
-    if (kr != KERN_SUCCESS) {
-        SporkLog(@"mach_vm_remap FIXED failed: %d", kr);
-    }
-    
-    sys_icache_invalidate((void*)page, 0x4000);
+    return NULL;
 }
 
-// --- Hook Function ---
-int my_lua_pcall(void* L, int nargs, int nresults, int errfunc) {
-    if (g_scriptQueue && g_scriptQueue.count > 0) {
+// --- VTable Hook for Job::step ---
+void my_job_step(void* job) {
+    if (g_scriptQueue && g_scriptQueue.count > 0 && g_L) {
         NSString *script = g_scriptQueue.firstObject;
         [g_scriptQueue removeObjectAtIndex:0];
         
         uintptr_t base = get_robloxlib_base();
         luau_load_t luau_load = (luau_load_t)(base + OFFSET_LUAU_LOAD);
-        lua_gettop_t lua_gettop = (lua_gettop_t)(base + OFFSET_LUA_GETTOP);
-        lua_settop_t lua_settop = (lua_settop_t)(base + OFFSET_LUA_SETTOP);
-        spawn_t spawn = (spawn_t)(base + OFFSET_SPAWN);
+        lua_pcall_t lua_pcall = (lua_pcall_t)(base + OFFSET_LUA_PCALL);
         
-        SporkLog(@"Hook triggered! Scheduling script...");
+        SporkLog(@"Job::step hooked! Executing script...");
         const char *source = [script UTF8String];
         
-        int top = lua_gettop(L);
-        int status = luau_load(L, "SporkScript", source, strlen(source), 0);
-        
+        int status = luau_load(g_L, "SporkScript", source, strlen(source), 0);
         if (status == 0) {
-            spawn(L);
-            SporkLog(@"Success: Script spawned on engine thread!");
+            lua_pcall(g_L, 0, 0, 0);
+            SporkLog(@"Success: Script executed!");
         } else {
             SporkLog(@"Error: Compile/Load Failed with status %d", status);
         }
-        lua_settop(L, top); // Restore stack
     }
     
-    return orig_lua_pcall(L, nargs, nresults, errfunc);
+    // Call the original step function
+    if (orig_job_step) {
+        ((void(*)(void*))orig_job_step)(job);
+    }
 }
 
 bool InjectExecutor(void) {
@@ -184,11 +161,76 @@ bool InjectExecutor(void) {
         SporkLog(@"Error: Failed to find RobloxLib base.");
         return false;
     }
-
-    void* target_pcall = (void*)(base + OFFSET_LUA_PCALL);
-    install_hook(target_pcall, (void*)my_lua_pcall);
     
-    SporkLog(@"Success: Hooked lua_pcall! Waiting for engine tick...");
+    void* task_scheduler = NULL;
+    if (!safe_read((void*)(base + OFFSET_TASKSCHEDULER), &task_scheduler, 8) || !task_scheduler) {
+        SporkLog(@"Error: Failed to find TaskScheduler.");
+        return false;
+    }
+    task_scheduler = (void*)STRIP_PAC(task_scheduler);
+    
+    uintptr_t start = 0, end = 0;
+    safe_read((char*)task_scheduler + OFFSET_TS_JOBS_START, &start, 8);
+    safe_read((char*)task_scheduler + OFFSET_TS_JOBS_END, &end, 8);
+    
+    start = STRIP_PAC(start);
+    end = STRIP_PAC(end);
+
+    if (!start || !end || end <= start) {
+        SporkLog(@"Error: Invalid job list pointers.");
+        return false;
+    }
+
+    void* target_job = NULL;
+
+    for (uintptr_t ptr = start; ptr < end; ptr += 0x10) {
+        void* j = NULL;
+        if (!safe_read((void*)ptr, &j, 8) || !j) continue;
+        
+        uintptr_t stripped_j = STRIP_PAC(j);
+        
+        void* script_context = NULL;
+        if (safe_read((char*)stripped_j + OFFSET_JOB_SCRIPT_CTX, &script_context, 8) && script_context) {
+            script_context = (void*)STRIP_PAC(script_context);
+            
+            g_L = FindLuaState(script_context);
+            if (g_L) {
+                target_job = j;
+                SporkLog(@"Success: Found mainthread in ScriptContext: %p", g_L);
+                break;
+            }
+            
+            g_L = FindLuaState((void*)stripped_j);
+            if (g_L) {
+                target_job = j;
+                SporkLog(@"Success: Found mainthread in Job: %p", g_L);
+                break;
+            }
+        }
+    }
+    
+    if (!g_L || !target_job) {
+        SporkLog(@"Error: Could not find a valid lua_State or Job.");
+        return false;
+    }
+
+    // --- VTable Hook ---
+    void** original_vtable = *(void***)target_job;
+    orig_job_step = original_vtable[0]; // Job::step is the first function in the vtable
+    
+    // Create a copy of the vtable in heap memory
+    void** new_vtable = (void**)malloc(0x1000);
+    memcpy(new_vtable, original_vtable, 0x1000);
+    
+    // Replace index 0 with our hook
+    new_vtable[0] = (void*)my_job_step;
+    
+    // Point the Job's vtable to our new one
+    uintptr_t job_page = (uintptr_t)target_job & ~0xFFF;
+    vm_protect(mach_task_self(), job_page, 0x4000, false, VM_PROT_READ | VM_PROT_WRITE);
+    *(void***)target_job = new_vtable;
+    
+    SporkLog(@"Success: Hooked Job::step via VTable!");
     g_is_injected = true;
     return true;
 }
