@@ -50,9 +50,6 @@ typedef void* (*lua_newthread_t)(void* L);
 typedef void (*luaL_sandboxthread_t)(void* L);
 
 bool g_is_injected = false;
-
-// FIX: Added g_execution_method back so SporkUI.mm can link to it.
-// The backend ignores this and uses the safe lua_newthread method regardless.
 int g_execution_method = 1; 
 
 static NSMutableArray<NSString *> *g_scriptQueue = nil;
@@ -116,25 +113,32 @@ uintptr_t get_robloxlib_base(void) {
     return 0;
 }
 
-// --- Scanner for encrypted lua_State pointer ---
+// --- Fixed Scanner for encrypted lua_State pointer ---
 void* find_lua_state_in_sc(void* script_context) {
     uintptr_t ctx = (uintptr_t)script_context;
-    // Scan first 0x1000 bytes of ScriptContext
-    for (int i = 0; i < 0x1000; i += 8) {
+    int candidate_count = 0;
+    
+    // Scan up to 0x2000 bytes of ScriptContext
+    for (int i = 0; i < 0x2000; i += 8) {
         uintptr_t addr = ctx + i;
         uint32_t enc[2] = {0, 0};
         if (!safe_read((void*)addr, enc, 8)) continue;
 
-        // Standard Roblox pointer decryption formula
         uint32_t low  = (uint32_t)addr - enc[0];
         uint32_t high = (uint32_t)addr - enc[1];
         uintptr_t L = ((uint64_t)high << 32) | low;
 
-        if (L > 0x100000000 && L < 0x400000000) {
+        // FIXED BOUNDS: 64-bit iOS pointers can go up to 0x7FFFFFFFFFFF
+        if (L > 0x100000000 && L < 0x7FFFFFFFFFFF) {
             uint8_t tt = 0;
-            if (safe_read((void*)(L + 0x2), &tt, 1) && tt == 9) {
-                SporkLog(@"Found encrypted L at offset 0x%X -> %p", i, (void*)L);
-                return (void*)L;
+            if (safe_read((void*)(L + 0x2), &tt, 1)) {
+                if (tt == 8 || tt == 9) {
+                    SporkLog(@"Found encrypted L at offset 0x%X -> %p", i, (void*)L);
+                    return (void*)L;
+                } else if (candidate_count < 5) {
+                    SporkLog(@"Candidate at offset 0x%X: L = %p, tt = %d", i, (void*)L, tt);
+                    candidate_count++;
+                }
             }
         }
     }
@@ -193,7 +197,7 @@ void my_job_step(void* job) {
             } else {
                 g_find_fail_count++;
                 if (g_find_fail_count == 1 || g_find_fail_count % 60 == 0) {
-                    SporkLog(@"Scanner could not find encrypted lua_State. Retrying...");
+                    SporkLog(@"Scanner could not find lua_State. Retrying...");
                 }
             }
         }
