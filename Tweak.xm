@@ -50,13 +50,13 @@ void* FindLuaState(void* script_context) {
     for (int i = 0; i < 0x2000; i += 8) {
         void* ptr = *(void**)((char*)script_context + i);
         
-        // Valid user-space pointer check
-        if (ptr > 0x100000000 && ptr < 0x8000000000) {
+        // Valid user-space pointer check (Cast to uintptr_t to fix compile error)
+        if ((uintptr_t)ptr > 0x100000000 && (uintptr_t)ptr < 0x8000000000) {
             uint8_t tt = *(uint8_t*)((char*)ptr + 0x2); // lua_State::tt is at 0x2
             void* global = *(void**)((char*)ptr + 0x78); // lua_State::global is at 0x78
             
             // LUA_TTHREAD is 8. If this matches, we found the lua_State!
-            if (tt == 8 && global > 0x100000000) {
+            if (tt == 8 && (uintptr_t)global > 0x100000000) {
                 return ptr;
             }
         }
@@ -99,7 +99,7 @@ bool InjectExecutor(void) {
         return false;
     }
     
-    // 3. Safely scan for lua_State instead of calling broken get_global_state
+    // 3. Safely scan for lua_State
     g_L = FindLuaState(script_context);
     
     if (g_L) {
