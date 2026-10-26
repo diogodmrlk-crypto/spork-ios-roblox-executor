@@ -68,7 +68,6 @@ void SporkLog(NSString *format, ...) {
 // Strip PAC (Pointer Authentication Code) for arm64e
 #define STRIP_PAC(ptr) ((uintptr_t)(ptr) & 0x0000000FFFFFFFFF)
 
-// Safely read memory
 bool safe_read(void* address, void* buffer, size_t size) {
     uintptr_t addr = STRIP_PAC(address);
     if (addr < 0x100000000 || addr > 0x8000000000) return false;
@@ -78,7 +77,6 @@ bool safe_read(void* address, void* buffer, size_t size) {
     return (kr == KERN_SUCCESS && out_size == size);
 }
 
-// Find the base address of RobloxLib
 uintptr_t get_robloxlib_base(void) {
     uint32_t count = _dyld_image_count();
     for (uint32_t i = 0; i < count; i++) {
@@ -90,24 +88,37 @@ uintptr_t get_robloxlib_base(void) {
     return 0;
 }
 
+// Extremely strict lua_State finder
 void* FindLuaState(void* base_ptr) {
     if (!base_ptr) return NULL;
     uintptr_t base = STRIP_PAC(base_ptr);
     
-    for (int i = 0; i < 0x2000; i += 8) {
+    for (int i = 0; i < 0x4000; i += 8) {
         void* ptr = NULL;
         if (!safe_read((void*)(base + i), &ptr, 8)) continue;
         
         uintptr_t stripped_ptr = STRIP_PAC(ptr);
-        if (stripped_ptr > 0x100000000 && stripped_ptr < 0x8000000000) {
+        // Real lua_State addresses on iOS are usually in the 0x100000000 - 0x400000000 range
+        if (stripped_ptr > 0x100000000 && stripped_ptr < 0x400000000) {
             uint8_t tt = 0;
             if (!safe_read((void*)(stripped_ptr + 0x2), &tt, 1)) continue;
             
-            if (tt == 9) { 
+            if (tt == 9) { // LUA_TTHREAD
                 void* global_ptr = NULL;
-                if (safe_read((void*)(stripped_ptr + 0x78), &global_ptr, 8)) {
-                    if (STRIP_PAC(global_ptr) > 0x100000000) {
-                        return (void*)stripped_ptr;
+                if (!safe_read((void*)(stripped_ptr + 0x78), &global_ptr, 8)) continue;
+                
+                uintptr_t stripped_global = STRIP_PAC(global_ptr);
+                if (stripped_global > 0x100000000 && stripped_global < 0x400000000) {
+                    // Verify global_State->mainthread points back to a valid lua_State
+                    void* mainthread = NULL;
+                    if (safe_read((void*)(stripped_global + 0x1a0), &mainthread, 8)) {
+                        uintptr_t stripped_mt = STRIP_PAC(mainthread);
+                        if (stripped_mt > 0x100000000 && stripped_mt < 0x400000000) {
+                            uint8_t mt_tt = 0;
+                            if (safe_read((void*)(stripped_mt + 0x2), &mt_tt, 1) && mt_tt == 9) {
+                                return (void*)stripped_ptr;
+                            }
+                        }
                     }
                 }
             }
@@ -125,7 +136,6 @@ bool InjectExecutor(void) {
         SporkLog(@"Error: Failed to find RobloxLib base.");
         return false;
     }
-    SporkLog(@"RobloxLib Base: 0x%lx", (unsigned long)base);
     
     void* task_scheduler = NULL;
     if (!safe_read((void*)(base + OFFSET_TASKSCHEDULER), &task_scheduler, 8) || !task_scheduler) {
@@ -133,7 +143,6 @@ bool InjectExecutor(void) {
         return false;
     }
     task_scheduler = (void*)STRIP_PAC(task_scheduler);
-    SporkLog(@"Found TaskScheduler: %p", task_scheduler);
     
     uintptr_t start = 0, end = 0;
     safe_read((char*)task_scheduler + OFFSET_TS_JOBS_START, &start, 8);
@@ -141,11 +150,9 @@ bool InjectExecutor(void) {
     
     start = STRIP_PAC(start);
     end = STRIP_PAC(end);
-    
-    SporkLog(@"Job list Start: %p, End: %p", (void*)start, (void*)end);
 
     if (!start || !end || end <= start) {
-        SporkLog(@"Error: Invalid job list pointers or empty list.");
+        SporkLog(@"Error: Invalid job list pointers.");
         return false;
     }
 
@@ -163,21 +170,21 @@ bool InjectExecutor(void) {
             
             g_L = FindLuaState(script_context);
             if (g_L) {
-                SporkLog(@"Success: Found lua_State in ScriptContext: %p", g_L);
+                SporkLog(@"Success: Found real lua_State in ScriptContext: %p", g_L);
                 g_is_injected = true;
                 return true;
             }
             
             g_L = FindLuaState((void*)stripped_j);
             if (g_L) {
-                SporkLog(@"Success: Found lua_State in Job: %p", g_L);
+                SporkLog(@"Success: Found real lua_State in Job: %p", g_L);
                 g_is_injected = true;
                 return true;
             }
         }
     }
     
-    SporkLog(@"Scanned %d jobs, but failed to find lua_State.", jobCount);
+    SporkLog(@"Scanned %d jobs, but could not find a valid lua_State.", jobCount);
     return false;
 }
 
