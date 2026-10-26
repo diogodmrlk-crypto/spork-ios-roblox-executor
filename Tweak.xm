@@ -14,7 +14,8 @@
 #define OFFSET_TS_JOBS_END        0xd8
 #define OFFSET_JOB_SCRIPT_CTX     0x1b0
 
-#define OFFSET_LUAU_LOAD          0x44bc110
+// Lua functions
+#define OFFSET_LUAU_LOAD          0x44bc110  // luau_load (equivalent to luaL_loadbuffer)
 #define OFFSET_LUA_PCALL          0x4490fec
 #define OFFSET_LUA_NEWTHREAD      0x448df3c
 #define OFFSET_LUAL_SANDBOXTHREAD 0x1a12ad4
@@ -53,7 +54,7 @@ typedef void* (*lua_newthread_t)(void* L);
 typedef void (*luaL_sandboxthread_t)(void* L);
 
 bool g_is_injected = false;
-int g_execution_method = 2; // Hardcoded to Method 2 (New Thread)
+int g_execution_method = 2; // Hardcoded to use a new thread (Method 2 logic)
 static NSMutableArray<NSString *> *g_scriptQueue = nil;
 static const char* g_current_script_source = NULL;
 static size_t g_current_script_size = 0;
@@ -125,7 +126,7 @@ void my_job_step(void* job) {
         if (safe_read((char*)job + OFFSET_JOB_SCRIPT_CTX, &script_context, 8) && script_context) {
             script_context = (void*)STRIP_PAC(script_context);
             
-            // Decrypt the lua_State pointer
+            // Decrypt the lua_State pointer (kept from your previous working attempt)
             uintptr_t ctx_addr = (uintptr_t)script_context;
             uintptr_t encrypted_array_addr = ctx_addr + OFFSET_SCRIPT_CONTEXT_LUA_STATE_ARRAY;
             
@@ -146,6 +147,7 @@ void my_job_step(void* job) {
                     g_current_script_source = [script UTF8String];
                     g_current_script_size = strlen(g_current_script_source);
                     
+                    // Resolve the function pointers using your offsets
                     luau_load_t luau_load = (luau_load_t)(base + OFFSET_LUAU_LOAD);
                     lua_pcall_t lua_pcall = (lua_pcall_t)(base + OFFSET_LUA_PCALL);
                     lua_newthread_t lua_newthread = (lua_newthread_t)(base + OFFSET_LUA_NEWTHREAD);
@@ -157,12 +159,16 @@ void my_job_step(void* job) {
                     int sig = sigsetjmp(hook_jump_buffer, 1);
                     
                     if (sig == 0) {
-                        // Create a new thread to prevent deadlocking the main thread
+                        // 1. Create a new thread to avoid corrupting the main engine state
                         void* new_L = lua_newthread(live_L);
                         if (new_L) {
+                            // 2. Sandbox the new thread
                             luaL_sandboxthread(new_L);
+                            
+                            // 3. Load the script. Passing env=0 uses the thread's global environment.
                             int status = luau_load(new_L, "SporkScript", g_current_script_source, g_current_script_size, 0);
                             if (status == 0) {
+                                // 4. Execute the loaded script
                                 lua_pcall(new_L, 0, 0, 0);
                                 SporkLog(@"Executed successfully!");
                             } else {
