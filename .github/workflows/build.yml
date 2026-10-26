@@ -7,9 +7,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Clone Dobby
+      - name: Clone and Patch Dobby
         run: |
           git clone --recursive https://github.com/jmpews/Dobby.git Dobby
+          # Patch dobby.h to fix Xcode 26 module error by moving includes outside extern "C"
+          perl -0777 -pi -e 's/#ifdef __cplusplus\nextern "C" \{\n#endif\n\n#include <stdint\.h>\n#include <sys\/types\.h>/#include <stdint.h>\n#include <sys\/types.h>\n\n#ifdef __cplusplus\nextern "C" {\n#endif/' Dobby/include/dobby.h
 
       - name: Setup Theos
         run: |
