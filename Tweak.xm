@@ -5,7 +5,6 @@
 #import <mach/vm_map.h>
 #import <signal.h>
 #import <setjmp.h>
-#import <stdlib.h>
 #import "SporkUI.h"
 
 // --- Offsets for Roblox 2.744.0.1077 (Relative to RobloxLib) ---
@@ -13,10 +12,12 @@
 #define OFFSET_TS_JOBS_START      0xd0
 #define OFFSET_TS_JOBS_END        0xd8
 #define OFFSET_JOB_SCRIPT_CTX     0x1b0
-#define OFFSET_LUAU_LOAD          0x44bc110
+#define OFFSET_LUA_GETFIELD       0x448fdb4
+#define OFFSET_LUA_PUSHSTRING     0x448f8d4
+#define OFFSET_LUA_PUSHVALUE      0x448e428
+#define OFFSET_LUA_GETTOP         0x448e048
+#define OFFSET_LUA_SETTOP         0x448e05c
 #define OFFSET_LUA_PCALL          0x4490fec
-#define OFFSET_LUA_NEWTHREAD      0x448df3c
-#define OFFSET_LUAL_SANDBOXTHREAD 0x1a12ad4
 
 // --- Pass-Through Window ---
 @interface PassThroughWindow : UIWindow
@@ -42,10 +43,12 @@
 static PassThroughWindow *overlayWindow = nil;
 
 // --- Executor Logic ---
+typedef void (*lua_getfield_t)(void* L, int idx, const char* k);
+typedef void (*lua_pushstring_t)(void* L, const char* s);
+typedef void (*lua_pushvalue_t)(void* L, int idx);
+typedef int (*lua_gettop_t)(void* L);
+typedef void (*lua_settop_t)(void* L, int idx);
 typedef int (*lua_pcall_t)(void* L, int nargs, int nresults, int errfunc);
-typedef int (*luau_load_t)(void* L, const char* chunkname, const char* data, size_t size, int env);
-typedef void* (*lua_newthread_t)(void* L);
-typedef void (*luaL_sandboxthread_t)(void* L);
 
 static void* g_L = NULL;
 bool g_is_injected = false;
@@ -58,16 +61,6 @@ static volatile sig_atomic_t in_lua_exec = 0;
 void signal_handler(int sig) {
     if (in_lua_exec) {
         siglongjmp(jump_buffer, sig);
-    }
-}
-
-// --- Native Allocator Bypass ---
-void* my_frealloc(void* ud, void* ptr, size_t osize, size_t nsize) {
-    if (nsize == 0) {
-        free(ptr);
-        return NULL;
-    } else {
-        return realloc(ptr, nsize);
     }
 }
 
@@ -215,57 +208,45 @@ void ProcessScriptQueue() {
     [g_scriptQueue removeObjectAtIndex:0];
 
     uintptr_t base = get_robloxlib_base();
-    luau_load_t luau_load = (luau_load_t)(base + OFFSET_LUAU_LOAD);
+    lua_getfield_t lua_getfield = (lua_getfield_t)(base + OFFSET_LUA_GETFIELD);
+    lua_pushstring_t lua_pushstring = (lua_pushstring_t)(base + OFFSET_LUA_PUSHSTRING);
+    lua_pushvalue_t lua_pushvalue = (lua_pushvalue_t)(base + OFFSET_LUA_PUSHVALUE);
+    lua_gettop_t lua_gettop = (lua_gettop_t)(base + OFFSET_LUA_GETTOP);
+    lua_settop_t lua_settop = (lua_settop_t)(base + OFFSET_LUA_SETTOP);
     lua_pcall_t lua_pcall = (lua_pcall_t)(base + OFFSET_LUA_PCALL);
-    lua_newthread_t lua_newthread = (lua_newthread_t)(base + OFFSET_LUA_NEWTHREAD);
-    luaL_sandboxthread_t luaL_sandboxthread = (luaL_sandboxthread_t)(base + OFFSET_LUAL_SANDBOXTHREAD);
 
-    SporkLog(@"Creating isolated coroutine...");
+    SporkLog(@"Executing safely via Lua task.spawn...");
     
     in_lua_exec = 1;
     int sig = sigsetjmp(jump_buffer, 1);
     
     if (sig == 0) {
-        // --- ALLOCATOR BYPASS ---
-        // global_State is at g_L + 0x78
-        void* global_state = NULL;
-        safe_read((void*)((char*)g_L + 0x78), &global_state, 8);
-        global_state = (void*)STRIP_PAC(global_state);
+        int top = lua_gettop(g_L);
         
-        void** frealloc_ptr = NULL;
-        void* orig_frealloc = NULL;
+        // 1. Get loadstring
+        lua_getfield(g_L, -10002, "loadstring");
+        // 2. Push source
+        lua_pushstring(g_L, [script UTF8String]);
+        // 3. Call loadstring(source) -> returns function or nil+error
+        int status = lua_pcall(g_L, 1, 1, 0);
         
-        if (global_state) {
-            // frealloc is at global_State + 0x20
-            frealloc_ptr = (void**)((char*)global_state + 0x20);
-            orig_frealloc = *frealloc_ptr;
-            *frealloc_ptr = (void*)my_frealloc;
-        }
-
-        void* new_L = lua_newthread(g_L);
-        if (!new_L) {
-            SporkLog(@"Error: Failed to create thread.");
-            if (frealloc_ptr && orig_frealloc) *frealloc_ptr = orig_frealloc;
-            in_lua_exec = 0;
-            return;
-        }
-        
-        luaL_sandboxthread(new_L);
-
-        const char *source = [script UTF8String];
-        SporkLog(@"Executing script...");
-        
-        int status = luau_load(new_L, "SporkScript", source, strlen(source), 0);
         if (status == 0) {
-            lua_pcall(new_L, 0, 0, 0);
-            SporkLog(@"Success: Script executed!");
+            // 4. Get task
+            lua_getfield(g_L, -10002, "task");
+            // 5. Get task.spawn
+            lua_getfield(g_L, -1, "spawn");
+            // 6. Push our compiled function
+            lua_pushvalue(g_L, -3);
+            // 7. Call task.spawn(function)
+            lua_pcall(g_L, 2, 0, 0);
+            
+            SporkLog(@"Success: Script sent to task.spawn!");
         } else {
-            SporkLog(@"Error: Compile/Load Failed with status %d", status);
+            SporkLog(@"Error: loadstring failed with status %d", status);
         }
         
-        // Restore original allocator
-        if (frealloc_ptr && orig_frealloc) *frealloc_ptr = orig_frealloc;
-        
+        // Restore stack
+        lua_settop(g_L, top);
         in_lua_exec = 0;
     } else {
         in_lua_exec = 0;
