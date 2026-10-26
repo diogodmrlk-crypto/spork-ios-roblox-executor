@@ -1,6 +1,6 @@
 #import "SporkUI.h"
 
-extern void ExecuteLuauBytecode(const char* bytecode, size_t size);
+extern void ExecuteLuauSource(const char* source, size_t size);
 extern bool InjectExecutor(void);
 extern bool g_is_injected;
 
@@ -460,7 +460,7 @@ extern bool g_is_injected;
     btn.backgroundColor = [UIColor clearColor]; 
     btn.layer.borderWidth = 0;
     UIImageSymbolConfiguration *config = [UIImageSymbolConfiguration configurationWithPointSize:30 weight:UIImageSymbolWeightBold];
-    [btn setImage:[UIImage systemImageNamed:@"hare.fill" withConfiguration:config] forState:UIControlStateNormal];
+    [btn setImage:[UIImage imageNamed:@"hare.fill" withConfiguration:config] forState:UIControlStateNormal];
     [btn setTintColor:[UIColor whiteColor]];
     btn.hidden = YES;
     [self.view addSubview:btn];
@@ -512,23 +512,11 @@ extern bool g_is_injected;
         return;
     }
 
-    // VALID Luau Version 7 bytecode for: print("Infinite Yield Loaded!")
-    static const char iy_bytecode[] = {
-        0x1B, 0x4C, 0x75, 0x61, 0x75, 0x07, 0x00, 0x01, 0x04, 0x04, 0x04, 0x08, 0x00, 
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
-        0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x17, 0x49, 0x6E, 0x66, 0x69, 0x6E, 0x69, 0x74, 
-        0x65, 0x20, 0x59, 0x69, 0x65, 0x6C, 0x64, 0x20, 0x4C, 0x6F, 0x61, 0x64, 0x65, 
-        0x64, 0x21, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
-    };
-
-    ExecuteLuauBytecode(iy_bytecode, sizeof(iy_bytecode));
+    // Execute plain text Luau source code
+    const char* iy_source = "print('Infinite Yield Loaded!')";
+    ExecuteLuauSource(iy_source, strlen(iy_source));
     
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Spork" message:@"Infinite Yield bytecode sent to executor." preferredStyle:UIAlertControllerStyleAlert];
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Spork" message:@"Infinite Yield script executed!" preferredStyle:UIAlertControllerStyleAlert];
     [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
     [self presentViewController:alert animated:YES completion:nil];
 }
@@ -541,9 +529,9 @@ extern bool g_is_injected;
         return;
     }
     
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Spork" message:@"Custom script execution is disabled in this build. Use Infinite Yield to test!" preferredStyle:UIAlertControllerStyleAlert];
-    [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
-    [self presentViewController:alert animated:YES completion:nil];
+    NSString *sourceCode = self.scriptEditor.text;
+    const char *cString = [sourceCode UTF8String];
+    ExecuteLuauSource(cString, strlen(cString));
 }
 
 - (void)copyAction { if (self.scriptEditor.text.length > 0) [UIPasteboard generalPasteboard].string = self.scriptEditor.text; }
