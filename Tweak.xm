@@ -23,7 +23,7 @@
 #define OFFSET_LUA_SETTOP         0x448e05c
 #define OFFSET_LUA_PUSHVALUE      0x448e428
 
-// --- New Offset for Modern Roblox ScriptContext ---
+// Offset for the encrypted Lua State array inside ScriptContext
 #define OFFSET_SCRIPT_CONTEXT_LUA_STATE_ARRAY 0x2B8
 
 // --- Pass-Through Window ---
@@ -67,7 +67,7 @@ static const char* g_current_script_source = NULL;
 static size_t g_current_script_size = 0;
 
 static void* orig_job_step = NULL;
-static int g_find_fail_count = 0; 
+static int g_find_fail_count = 0;
 
 // --- Local Crash Handler for the Hook ---
 static sigjmp_buf hook_jump_buffer;
@@ -123,12 +123,10 @@ uintptr_t get_robloxlib_base(void) {
     return 0;
 }
 
-// --- NEW: Robust Lua State Retrieval for Modern Roblox ---
+// --- DIAGNOSTIC: Reads and logs exactly what is at the ScriptContext offset ---
 void* GetLuaStateFromScriptContext(void* script_context) {
     if (!script_context) return NULL;
     uintptr_t ctx_addr = STRIP_PAC(script_context);
-
-    // The encrypted array is located at ScriptContext + 0x2B8
     uintptr_t encrypted_array_addr = ctx_addr + OFFSET_SCRIPT_CONTEXT_LUA_STATE_ARRAY;
 
     uint32_t encrypted[2] = {0, 0};
@@ -136,15 +134,15 @@ void* GetLuaStateFromScriptContext(void* script_context) {
         return NULL;
     }
 
-    // Decryption Algorithm: (High << 32) | Low
-    // Low  = (uint32_t)Address - Encrypted[0]
-    // High = (uint32_t)Address - Encrypted[1]
+    // Decryption Algorithm
     uint32_t low  = (uint32_t)encrypted_array_addr - encrypted[0];
     uint32_t high = (uint32_t)encrypted_array_addr - encrypted[1];
-
     uintptr_t lua_state_ptr = ((uint64_t)high << 32) | low;
 
-    // Sanity check: ensure the pointer is in a valid memory range
+    // SNITCH: Print exactly what we found at this offset
+    SporkLog(@"[Scan] SC: %p | enc[0]: 0x%08X | enc[1]: 0x%08X | L: %p", 
+             (void*)ctx_addr, encrypted[0], encrypted[1], (void*)lua_state_ptr);
+
     if (lua_state_ptr < 0x100000000 || lua_state_ptr > 0x400000000) {
         return NULL;
     }
@@ -179,7 +177,6 @@ void my_job_step(void* job) {
         if (safe_read((char*)job + OFFSET_JOB_SCRIPT_CTX, &script_context, 8) && script_context) {
             script_context = (void*)STRIP_PAC(script_context);
             
-            // Use the new decryption function
             void* live_L = GetLuaStateFromScriptContext(script_context);
             
             if (live_L) {
@@ -208,7 +205,6 @@ void my_job_step(void* job) {
                 if (sig == 0) {
                     
                     if (g_execution_method == 1) {
-                        // Method 1: Direct with Env
                         int top = lua_gettop(live_L);
                         lua_pushvalue(live_L, -10002);
                         int env = lua_gettop(live_L);
@@ -218,7 +214,6 @@ void my_job_step(void* job) {
                         lua_settop(live_L, top);
                         
                     } else if (g_execution_method == 2) {
-                        // Method 2: New Thread + Sandbox
                         void* new_L = lua_newthread(live_L);
                         if (new_L) {
                             luaL_sandboxthread(new_L);
@@ -228,12 +223,10 @@ void my_job_step(void* job) {
                         }
                         
                     } else if (g_execution_method == 3) {
-                        // Method 3: Spawn
                         lua_pushcclosurek(live_L, (void*)my_script_runner, "SporkRunner", 0, NULL);
                         spawn(live_L);
                         
                     } else if (g_execution_method == 4) {
-                        // Method 4: Raw Pcall (no env)
                         int status = luau_load(live_L, "SporkScript", g_current_script_source, g_current_script_size, 0);
                         if (status == 0) lua_pcall(live_L, 0, 0, 0);
                         else SporkLog(@"[M4] luau_load status %d", status);
@@ -292,33 +285,44 @@ bool InjectExecutor(void) {
     }
 
     void* target_job = NULL;
+    int job_count = 0;
 
+    SporkLog(@"Scanning Jobs for a valid ScriptContext...");
+
+    // Iterate through ALL jobs, checking each one for a valid Lua State
     for (uintptr_t ptr = start; ptr < end; ptr += 0x10) {
         void* j = NULL;
         if (!safe_read((void*)ptr, &j, 8) || !j) continue;
         
         uintptr_t stripped_j = STRIP_PAC(j);
         
-        void* script_context = NULL;
-        if (safe_read((char*)stripped_j + OFFSET_JOB_SCRIPT_CTX, &script_context, 8) && script_context) {
-            target_job = j;
-            SporkLog(@"Success: Found Job with ScriptContext: %p", j);
-            break;
+        void* job_sc = NULL;
+        if (safe_read((char*)stripped_j + OFFSET_JOB_SCRIPT_CTX, &job_sc, 8) && job_sc) {
+            job_count++;
+            job_sc = (void*)STRIP_PAC(job_sc);
+            
+            // Test the decryption on this specific job
+            void* L = GetLuaStateFromScriptContext(job_sc);
+            
+            if (L) {
+                SporkLog(@"✅ Found valid Lua VM! Job: %p | SC: %p", j, job_sc);
+                target_job = j;
+                break; // We found the live one
+            }
         }
     }
     
     if (!target_job) {
-        SporkLog(@"Error: Could not find a valid Job.");
+        SporkLog(@"Error: Scanned %d ScriptContexts, none had a valid Lua VM state.", job_count);
         return false;
     }
 
-    // --- VTable Hook ---
+    // --- VTable Hook on the specific job we found ---
     void** original_vtable = *(void***)target_job;
     orig_job_step = original_vtable[0]; 
     
     void** new_vtable = (void**)malloc(0x1000);
     memcpy(new_vtable, original_vtable, 0x1000);
-    
     new_vtable[0] = (void*)my_job_step;
     
     uintptr_t job_page = (uintptr_t)target_job & ~0xFFF;
@@ -334,13 +338,11 @@ bool InjectExecutor(void) {
     }
     
     *(void***)target_job = new_vtable;
-    
     SporkLog(@"Success: Hooked Job::step via VTable!");
     g_is_injected = true;
     return true;
 }
 
-// Renamed from ExecuteLuauSource to match extern declaration in SporkUI.mm
 void ExecuteLuauBytecode(const char* source, size_t size) {
     if (!g_is_injected) return;
     if (!g_scriptQueue) g_scriptQueue = [NSMutableArray new];
