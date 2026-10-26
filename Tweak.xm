@@ -8,12 +8,15 @@
 #import <libkern/OSCacheControl.h>
 #import "SporkUI.h"
 
-// Forward declare mach_vm_remap with extern "C" to fix the linker error
+// Forward declare mach_vm_remap
 extern "C" kern_return_t mach_vm_remap(vm_map_t target_task, uint64_t *target_address, uint64_t size, uint64_t mask, int flags, vm_map_t src_task, uint64_t src_address, boolean_t copy, vm_prot_t *cur_protection, vm_prot_t *max_protection, vm_inherit_t inheritance);
 
 // --- Offsets for Roblox 2.744.0.1077 (Relative to RobloxLib) ---
 #define OFFSET_LUA_PCALL          0x4490fec
 #define OFFSET_LUAU_LOAD          0x44bc110
+#define OFFSET_LUA_GETTOP         0x448e048
+#define OFFSET_LUA_SETTOP         0x448e05c
+#define OFFSET_SPAWN              0x19a56ec
 
 // --- Pass-Through Window ---
 @interface PassThroughWindow : UIWindow
@@ -41,6 +44,9 @@ static PassThroughWindow *overlayWindow = nil;
 // --- Executor Logic ---
 typedef int (*lua_pcall_t)(void* L, int nargs, int nresults, int errfunc);
 typedef int (*luau_load_t)(void* L, const char* chunkname, const char* data, size_t size, int env);
+typedef int (*lua_gettop_t)(void* L);
+typedef void (*lua_settop_t)(void* L, int idx);
+typedef void (*spawn_t)(void* L);
 
 bool g_is_injected = false;
 static NSMutableArray<NSString *> *g_scriptQueue = nil;
@@ -84,7 +90,7 @@ uintptr_t get_robloxlib_base(void) {
 // --- The Safe Mach VM Remap Hook ---
 void install_hook(void* target, void* hook) {
     kern_return_t kr;
-    uint64_t page = (uint64_t)target & ~0x3FFF; // 16KB page alignment for iOS
+    uint64_t page = (uint64_t)target & ~0x3FFF; // 16KB page alignment
     uint64_t new_page = 0;
     vm_prot_t cur_prot, max_prot;
 
@@ -96,7 +102,7 @@ void install_hook(void* target, void* hook) {
     }
 
     // 2. Make it writable
-    kr = vm_protect(mach_task_self(), (vm_address_t)new_page, 0x4000, false, VM_PROT_READ | VM_PROT_WRITE);
+    kr = vm_protect(mach_task_self(), (vm_address_t)new_page, 0x4000, false, VM_PROT_READ | VM_PROT_WRITE | VM_PROT_EXECUTE);
     if (kr != KERN_SUCCESS) {
         SporkLog(@"vm_protect failed: %d", kr);
         return;
@@ -105,10 +111,13 @@ void install_hook(void* target, void* hook) {
     uintptr_t offset = (uintptr_t)target - page;
     void* new_target = (void*)(new_page + offset);
 
-    // 3. Create trampoline (copy original instructions)
-    void* trampoline = mmap(NULL, 4096, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    // 3. Create trampoline inside the remapped page to avoid iOS JIT restrictions
+    void* trampoline = (void*)(new_page + 0x3F00); 
+    
+    // Copy original 16 bytes to trampoline
     memcpy(trampoline, new_target, 16);
     
+    // Append jump back to original function
     uint32_t* tramp_code = (uint32_t*)((uintptr_t)trampoline + 16);
     tramp_code[0] = 0x58000050; // ldr x16, #8
     tramp_code[1] = 0xD61F0200; // br x16
@@ -116,7 +125,7 @@ void install_hook(void* target, void* hook) {
 
     orig_lua_pcall = (lua_pcall_t)trampoline;
 
-    // 4. Patch the new page with jump to our hook
+    // 4. Patch the target with jump to our hook
     uint32_t* target_code = (uint32_t*)new_target;
     target_code[0] = 0x58000050; // ldr x16, #8
     target_code[1] = 0xD61F0200; // br x16
@@ -144,20 +153,25 @@ int my_lua_pcall(void* L, int nargs, int nresults, int errfunc) {
         
         uintptr_t base = get_robloxlib_base();
         luau_load_t luau_load = (luau_load_t)(base + OFFSET_LUAU_LOAD);
+        lua_gettop_t lua_gettop = (lua_gettop_t)(base + OFFSET_LUA_GETTOP);
+        lua_settop_t lua_settop = (lua_settop_t)(base + OFFSET_LUA_SETTOP);
+        spawn_t spawn = (spawn_t)(base + OFFSET_SPAWN);
         
-        SporkLog(@"Hook triggered! Executing script...");
+        SporkLog(@"Hook triggered! Scheduling script...");
         const char *source = [script UTF8String];
         
+        int top = lua_gettop(L);
         int status = luau_load(L, "SporkScript", source, strlen(source), 0);
+        
         if (status == 0) {
-            orig_lua_pcall(L, 0, 0, 0);
-            SporkLog(@"Success: Script executed!");
+            spawn(L);
+            SporkLog(@"Success: Script spawned on engine thread!");
         } else {
             SporkLog(@"Error: Compile/Load Failed with status %d", status);
         }
+        lua_settop(L, top); // Restore stack
     }
     
-    // Continue original execution
     return orig_lua_pcall(L, nargs, nresults, errfunc);
 }
 
@@ -171,7 +185,6 @@ bool InjectExecutor(void) {
         return false;
     }
 
-    // Install the safe inline hook for lua_pcall
     void* target_pcall = (void*)(base + OFFSET_LUA_PCALL);
     install_hook(target_pcall, (void*)my_lua_pcall);
     
