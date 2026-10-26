@@ -13,8 +13,8 @@
 #define OFFSET_TS_JOBS_END        0xd8
 #define OFFSET_JOB_SCRIPT_CTX     0x1b0
 #define OFFSET_LUAU_LOAD          0x44bc110
-#define OFFSET_LUA_NEWTHREAD      0x448df3c
-#define OFFSET_LUAL_SANDBOXTHREAD 0x1a12ad4
+#define OFFSET_LUA_PCALL          0x4490fec
+#define OFFSET_LUA_PUSHCCLOSUREK  0x448f9fc
 #define OFFSET_SPAWN              0x19a56ec
 
 // --- Pass-Through Window ---
@@ -41,14 +41,16 @@
 static PassThroughWindow *overlayWindow = nil;
 
 // --- Executor Logic ---
+typedef int (*lua_pcall_t)(void* L, int nargs, int nresults, int errfunc);
 typedef int (*luau_load_t)(void* L, const char* chunkname, const char* data, size_t size, int env);
-typedef void* (*lua_newthread_t)(void* L);
-typedef void (*luaL_sandboxthread_t)(void* L);
+typedef void (*lua_pushcclosurek_t)(void* L, void* fn, const char* debugname, int nup, void* cont);
 typedef void (*spawn_t)(void* L);
 
 static void* g_L = NULL;
 bool g_is_injected = false;
 static NSMutableArray<NSString *> *g_scriptQueue = nil;
+static const char* g_current_script_source = NULL;
+static size_t g_current_script_size = 0;
 
 // --- Crash-Proof Signal Handler ---
 static sigjmp_buf jump_buffer;
@@ -86,7 +88,6 @@ void SporkLog(NSString *format, ...) {
 
 bool safe_read(void* address, void* buffer, size_t size) {
     uintptr_t addr = STRIP_PAC(address);
-    // The address 0xf94006d6a9027fff is a false positive. Real iOS heap addresses are much lower.
     if (addr < 0x100000000 || addr > 0x7FFFFFFFFFFF) return false;
     
     vm_size_t out_size;
@@ -198,44 +199,56 @@ bool InjectExecutor(void) {
     return false;
 }
 
+// The C function that will run on the engine thread
+int my_script_runner(void* L) {
+    uintptr_t base = get_robloxlib_base();
+    luau_load_t luau_load = (luau_load_t)(base + OFFSET_LUAU_LOAD);
+    lua_pcall_t lua_pcall = (lua_pcall_t)(base + OFFSET_LUA_PCALL);
+
+    SporkLog(@"Running script on engine thread...");
+    int status = luau_load(L, "SporkScript", g_current_script_source, g_current_script_size, 0);
+    if (status == 0) {
+        lua_pcall(L, 0, 0, 0);
+        SporkLog(@"Success: Script executed!");
+    } else {
+        SporkLog(@"Error: Compile/Load Failed with status %d", status);
+    }
+    return 0;
+}
+
 void ProcessScriptQueue() {
     if (!g_is_injected || !g_L || !g_scriptQueue || g_scriptQueue.count == 0) return;
 
+    // Validate g_L before doing anything
+    uint8_t tt;
+    if (!safe_read((void*)((char*)g_L + 0x2), &tt, 1) || tt != 9) {
+        SporkLog(@"Error: g_L is no longer a valid thread (tt=%d)", tt);
+        return;
+    }
+
     NSString *script = g_scriptQueue.firstObject;
     [g_scriptQueue removeObjectAtIndex:0];
+    
+    g_current_script_source = [script UTF8String];
+    g_current_script_size = strlen(g_current_script_source);
 
     uintptr_t base = get_robloxlib_base();
-    luau_load_t luau_load = (luau_load_t)(base + OFFSET_LUAU_LOAD);
-    lua_newthread_t lua_newthread = (lua_newthread_t)(base + OFFSET_LUA_NEWTHREAD);
-    luaL_sandboxthread_t luaL_sandboxthread = (luaL_sandboxthread_t)(base + OFFSET_LUAL_SANDBOXTHREAD);
+    lua_pushcclosurek_t lua_pushcclosurek = (lua_pushcclosurek_t)(base + OFFSET_LUA_PUSHCCLOSUREK);
     spawn_t spawn_func = (spawn_t)(base + OFFSET_SPAWN);
 
-    SporkLog(@"Creating isolated coroutine...");
+    SporkLog(@"Pushing C closure and spawning...");
     
     in_lua_exec = 1;
     int sig = sigsetjmp(jump_buffer, 1);
     
     if (sig == 0) {
-        void* new_L = lua_newthread(g_L);
-        if (!new_L) {
-            SporkLog(@"Error: Failed to create thread.");
-            in_lua_exec = 0;
-            return;
-        }
+        // Push the C function to the VM stack
+        lua_pushcclosurek(g_L, (void*)my_script_runner, "SporkRunner", 0, NULL);
         
-        luaL_sandboxthread(new_L);
-
-        const char *source = [script UTF8String];
-        SporkLog(@"Compiling script...");
+        // Schedule it to run on the engine thread
+        spawn_func(g_L);
         
-        int status = luau_load(new_L, "SporkScript", source, strlen(source), 0);
-        if (status == 0) {
-            // Use spawn to schedule the script on the game's thread
-            spawn_func(new_L);
-            SporkLog(@"Success: Script queued on engine thread!");
-        } else {
-            SporkLog(@"Error: Compile/Load Failed with status %d", status);
-        }
+        SporkLog(@"Success: Script queued on engine thread!");
         in_lua_exec = 0;
     } else {
         in_lua_exec = 0;
