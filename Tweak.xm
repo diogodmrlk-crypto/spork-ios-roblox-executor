@@ -12,7 +12,6 @@
 #define OFFSET_JOB_SCRIPT_CTX   0x1b0
 #define OFFSET_LUAU_LOAD        0x44bc110
 #define OFFSET_LUA_PCALL        0x4490fec
-#define OFFSET_LUA_SETTOP       0x448e05c
 
 // --- Pass-Through Window ---
 @interface PassThroughWindow : UIWindow
@@ -40,7 +39,6 @@ static PassThroughWindow *overlayWindow = nil;
 // --- Executor Logic ---
 typedef int (*lua_pcall_t)(void* L, int nargs, int nresults, int errfunc);
 typedef int (*luau_load_t)(void* L, const char* chunkname, const char* data, size_t size, int env);
-typedef void (*lua_settop_t)(void* L, int idx);
 
 static void* g_L = NULL;
 bool g_is_injected = false;
@@ -89,51 +87,6 @@ uintptr_t get_robloxlib_base(void) {
     return 0;
 }
 
-// Strict validation to prevent false positives
-bool IsValidLuaState(uintptr_t L) {
-    if (L < 0x100000000 || L > 0x8000000000) return false;
-    
-    uint8_t tt = 0;
-    if (!safe_read((void*)(L + 0x2), &tt, 1) || tt != 9) return false;
-    
-    void* global = NULL;
-    if (!safe_read((void*)(L + 0x78), &global, 8)) return false;
-    if (STRIP_PAC(global) < 0x100000000 || STRIP_PAC(global) > 0x8000000000) return false;
-    
-    void* base_ci = NULL;
-    if (!safe_read((void*)(L + 0x18), &base_ci, 8)) return false;
-    if (STRIP_PAC(base_ci) < 0x100000000) return false;
-
-    void* base = NULL;
-    if (!safe_read((void*)(L + 0x58), &base, 8)) return false;
-    
-    void* stack = NULL;
-    if (!safe_read((void*)(L + 0x60), &stack, 8)) return false;
-    
-    void* stack_last = NULL;
-    if (!safe_read((void*)(L + 0x68), &stack_last, 8)) return false;
-    
-    void* top = NULL;
-    if (!safe_read((void*)(L + 0x70), &top, 8)) return false;
-    
-    int stacksize = 0;
-    if (!safe_read((void*)(L + 0x80), &stacksize, 4)) return false;
-    
-    int size_ci = 0;
-    if (!safe_read((void*)(L + 0x84), &size_ci, 4)) return false;
-
-    // Validate pointers and sizes
-    if (STRIP_PAC(stack) < 0x100000000 || STRIP_PAC(stack) > 0x8000000000) return false;
-    if (STRIP_PAC(stack_last) < 0x100000000 || STRIP_PAC(stack_last) > 0x8000000000) return false;
-    if (STRIP_PAC(base) < STRIP_PAC(stack) || STRIP_PAC(base) > STRIP_PAC(stack_last)) return false;
-    if (STRIP_PAC(top) < STRIP_PAC(base) || STRIP_PAC(top) > STRIP_PAC(stack_last)) return false;
-    
-    if (stacksize <= 0 || stacksize > 1000000) return false;
-    if (size_ci <= 0 || size_ci > 1000000) return false;
-
-    return true;
-}
-
 void* FindLuaState(void* base_ptr) {
     if (!base_ptr) return NULL;
     uintptr_t base = STRIP_PAC(base_ptr);
@@ -143,15 +96,22 @@ void* FindLuaState(void* base_ptr) {
         if (!safe_read((void*)(base + i), &ptr, 8)) continue;
         
         uintptr_t stripped_ptr = STRIP_PAC(ptr);
-        if (IsValidLuaState(stripped_ptr)) {
-            // Verify it's a mainthread
-            void* global = NULL;
-            safe_read((void*)(stripped_ptr + 0x78), &global, 8);
+        if (stripped_ptr > 0x100000000 && stripped_ptr < 0x8000000000) {
+            uint8_t tt = 0;
+            if (!safe_read((void*)(stripped_ptr + 0x2), &tt, 1)) continue;
             
-            void* mainthread = NULL;
-            if (safe_read((void*)(STRIP_PAC(global) + 0x1a0), &mainthread, 8)) {
-                if (STRIP_PAC(mainthread) == stripped_ptr) {
-                    return ptr; // Return original pointer with PAC intact
+            if (tt == 9) { // LUA_TTHREAD
+                void* global_ptr = NULL;
+                if (!safe_read((void*)(stripped_ptr + 0x78), &global_ptr, 8)) continue;
+                
+                uintptr_t stripped_global = STRIP_PAC(global_ptr);
+                if (stripped_global > 0x100000000 && stripped_global < 0x8000000000) {
+                    void* mainthread = NULL;
+                    if (safe_read((void*)(stripped_global + 0x1a0), &mainthread, 8)) {
+                        if (STRIP_PAC(mainthread) > 0x100000000) {
+                            return mainthread;
+                        }
+                    }
                 }
             }
         }
@@ -221,18 +181,13 @@ bool InjectExecutor(void) {
 }
 
 void ExecuteLuauSource(const char* source, size_t size) {
-    if (!g_is_injected || !g_L) {
-        return;
-    }
+    if (!g_is_injected || !g_L) return;
 
     uintptr_t base = get_robloxlib_base();
     luau_load_t luau_load = (luau_load_t)(base + OFFSET_LUAU_LOAD);
     lua_pcall_t lua_pcall = (lua_pcall_t)(base + OFFSET_LUA_PCALL);
-    lua_settop_t lua_settop = (lua_settop_t)(base + OFFSET_LUA_SETTOP);
 
-    // Clear the stack before execution
-    lua_settop(g_L, 0);
-    
+    // We removed lua_settop to prevent stack corruption
     int status = luau_load(g_L, "SporkScript", source, size, 0);
     
     if (status == 0) {
