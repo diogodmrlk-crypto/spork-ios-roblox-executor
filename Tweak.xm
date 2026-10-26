@@ -5,6 +5,7 @@
 #import <mach/vm_map.h>
 #import <signal.h>
 #import <setjmp.h>
+#import <stdlib.h>
 #import "SporkUI.h"
 
 // --- Offsets for Roblox 2.744.0.1077 (Relative to RobloxLib) ---
@@ -60,6 +61,16 @@ void signal_handler(int sig) {
     }
 }
 
+// --- Native Allocator Bypass ---
+void* my_frealloc(void* ud, void* ptr, size_t osize, size_t nsize) {
+    if (nsize == 0) {
+        free(ptr);
+        return NULL;
+    } else {
+        return realloc(ptr, nsize);
+    }
+}
+
 // --- Logging System ---
 NSMutableArray<NSString *> *g_logs = nil;
 
@@ -104,7 +115,6 @@ uintptr_t get_robloxlib_base(void) {
     return 0;
 }
 
-// The exact scanner that returned 0x10f7848b8
 void* FindLuaState(void* base_ptr) {
     if (!base_ptr) return NULL;
     uintptr_t base = STRIP_PAC(base_ptr);
@@ -216,9 +226,26 @@ void ProcessScriptQueue() {
     int sig = sigsetjmp(jump_buffer, 1);
     
     if (sig == 0) {
+        // --- ALLOCATOR BYPASS ---
+        // global_State is at g_L + 0x78
+        void* global_state = NULL;
+        safe_read((void*)((char*)g_L + 0x78), &global_state, 8);
+        global_state = (void*)STRIP_PAC(global_state);
+        
+        void** frealloc_ptr = NULL;
+        void* orig_frealloc = NULL;
+        
+        if (global_state) {
+            // frealloc is at global_State + 0x20
+            frealloc_ptr = (void**)((char*)global_state + 0x20);
+            orig_frealloc = *frealloc_ptr;
+            *frealloc_ptr = (void*)my_frealloc;
+        }
+
         void* new_L = lua_newthread(g_L);
         if (!new_L) {
             SporkLog(@"Error: Failed to create thread.");
+            if (frealloc_ptr && orig_frealloc) *frealloc_ptr = orig_frealloc;
             in_lua_exec = 0;
             return;
         }
@@ -235,6 +262,10 @@ void ProcessScriptQueue() {
         } else {
             SporkLog(@"Error: Compile/Load Failed with status %d", status);
         }
+        
+        // Restore original allocator
+        if (frealloc_ptr && orig_frealloc) *frealloc_ptr = orig_frealloc;
+        
         in_lua_exec = 0;
     } else {
         in_lua_exec = 0;
