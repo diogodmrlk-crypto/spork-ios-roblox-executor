@@ -3,7 +3,9 @@
 #import <string.h>
 #import <ptrauth.h>
 #import "SporkUI.h"
-#include "dobby.h"
+
+// Manually declare DobbyHook to bypass Xcode 26's C++ header bug
+extern "C" int DobbyHook(void *address, void *replace_func, void **origin_func);
 
 // --- Offsets for Roblox 2.744.0.1077 (Relative to RobloxLib) ---
 #define OFFSET_LUA_PCALL          0x4490fec
