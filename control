@@ -1,8 +1,8 @@
-Package: com.yourname.spork
+Package: com.wearedevsteck.spork
 Name: Spork
 Version: 1.0.0
 Architecture: iphoneos-arm
 Description: Spork UI & Executor
-Maintainer: YourName
-Author: YourName
-Section: Tweaks
+Maintainer: wearedevsteck
+Author: wearedevsteck
+Section: name
