@@ -6,13 +6,16 @@ include $(THEOS)/makefiles/common.mk
 
 TWEAK_NAME = Spork
 
-# ONLY compile the core Dobby source files, ignoring Windows/Linux plugins
-DOBBY_SRC = $(shell find Dobby/source -name '*.cc' -o -name '*.c')
+# Find all Dobby C++ files, but STRICTLY ignore Windows/Intel/Linux folders
+DOBBY_SRC = $(shell find Dobby/source -name '*.cc' -o -name '*.c' | grep -v -E '/(x64|x86|Windows|Linux)/')
+
+# Automatically get every single subfolder inside Dobby to use as an include path
+DOBBY_INCLUDES = $(addprefix -I, $(shell find Dobby/source Dobby/include -type d))
 
 Spork_FILES = Tweak.xm SporkUI.mm $(DOBBY_SRC)
-Spork_CCFLAGS = -std=c++11 -fno-exceptions -fno-rtti -I./Dobby/include -I./Dobby/source
-Spork_OBJCFLAGS = -fobjc-arc -I./Dobby/include
-Spork_OBJCCFLAGS = -fobjc-arc -I./Dobby/include
+Spork_CCFLAGS = -std=c++14 -fno-exceptions -fno-rtti $(DOBBY_INCLUDES)
+Spork_OBJCFLAGS = -fobjc-arc $(DOBBY_INCLUDES)
+Spork_OBJCCFLAGS = -fobjc-arc $(DOBBY_INCLUDES)
 
 # Link the C++ standard library
 Spork_LIBRARIES = c++
