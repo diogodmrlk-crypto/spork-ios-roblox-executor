@@ -12,6 +12,7 @@
 #define OFFSET_JOB_SCRIPT_CTX   0x1b0
 #define OFFSET_LUAU_LOAD        0x44bc110
 #define OFFSET_LUA_PCALL        0x4490fec
+#define OFFSET_LUA_SETTOP       0x448e05c
 
 // --- Pass-Through Window ---
 @interface PassThroughWindow : UIWindow
@@ -39,6 +40,7 @@ static PassThroughWindow *overlayWindow = nil;
 // --- Executor Logic ---
 typedef int (*lua_pcall_t)(void* L, int nargs, int nresults, int errfunc);
 typedef int (*luau_load_t)(void* L, const char* chunkname, const char* data, size_t size, int env);
+typedef void (*lua_settop_t)(void* L, int idx);
 
 static void* g_L = NULL;
 bool g_is_injected = false;
@@ -87,6 +89,7 @@ uintptr_t get_robloxlib_base(void) {
     return 0;
 }
 
+// Strictly find the mainthread of the global_State
 void* FindLuaState(void* base_ptr) {
     if (!base_ptr) return NULL;
     uintptr_t base = STRIP_PAC(base_ptr);
@@ -106,19 +109,18 @@ void* FindLuaState(void* base_ptr) {
                 
                 uintptr_t stripped_global = STRIP_PAC(global_ptr);
                 if (stripped_global > 0x100000000 && stripped_global < 0x8000000000) {
-                    size_t totalbytes = 0;
-                    if (!safe_read((void*)(stripped_global + 0x50), &totalbytes, 8)) continue;
-                    
-                    void* stack_ptr = NULL;
-                    if (!safe_read((void*)(stripped_ptr + 0x60), &stack_ptr, 8)) continue;
-                    
-                    int stacksize = 0;
-                    if (!safe_read((void*)(stripped_ptr + 0x80), &stacksize, 4)) continue;
-                    
-                    if (totalbytes > 0 && totalbytes < 0x80000000 &&
-                        STRIP_PAC(stack_ptr) > 0x100000000 &&
-                        stacksize > 0 && stacksize < 1000000) {
-                        return ptr;
+                    // Check if this thread is the global_State->mainthread
+                    void* mainthread = NULL;
+                    if (safe_read((void*)(stripped_global + 0x1a0), &mainthread, 8)) {
+                        if (STRIP_PAC(mainthread) == stripped_ptr) {
+                            // Verify it has a valid active CallInfo frame
+                            void* ci = NULL;
+                            if (safe_read((void*)(stripped_ptr + 0x50), &ci, 8)) {
+                                if (STRIP_PAC(ci) > 0x100000000) {
+                                    return ptr; // Return original pointer with PAC intact
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -170,14 +172,14 @@ bool InjectExecutor(void) {
             
             g_L = FindLuaState(script_context);
             if (g_L) {
-                SporkLog(@"Success: Found lua_State in ScriptContext: %p", g_L);
+                SporkLog(@"Success: Found mainthread in ScriptContext: %p", g_L);
                 g_is_injected = true;
                 return true;
             }
             
             g_L = FindLuaState((void*)stripped_j);
             if (g_L) {
-                SporkLog(@"Success: Found lua_State in Job: %p", g_L);
+                SporkLog(@"Success: Found mainthread in Job: %p", g_L);
                 g_is_injected = true;
                 return true;
             }
@@ -188,7 +190,6 @@ bool InjectExecutor(void) {
     return false;
 }
 
-// Changed to accept source code instead of bytecode
 void ExecuteLuauSource(const char* source, size_t size) {
     if (!g_is_injected || !g_L) {
         SporkLog(@"Error: Not injected.");
@@ -198,9 +199,16 @@ void ExecuteLuauSource(const char* source, size_t size) {
     uintptr_t base = get_robloxlib_base();
     luau_load_t luau_load = (luau_load_t)(base + OFFSET_LUAU_LOAD);
     lua_pcall_t lua_pcall = (lua_pcall_t)(base + OFFSET_LUA_PCALL);
+    lua_settop_t lua_settop = (lua_settop_t)(base + OFFSET_LUA_SETTOP);
 
     SporkLog(@"Compiling and executing source...");
+    
+    // Clear the stack to ensure luau_load has a clean environment
+    lua_settop(g_L, 0);
+    
+    // Pass 0 for env to use the default global environment
     int status = luau_load(g_L, "SporkScript", source, size, 0);
+    
     if (status == 0) {
         lua_pcall(g_L, 0, 0, 0);
         SporkLog(@"Success: Source Executed Successfully!");
