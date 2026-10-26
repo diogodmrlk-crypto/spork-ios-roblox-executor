@@ -13,6 +13,8 @@
 #define OFFSET_JOB_SCRIPT_CTX     0x1b0
 #define OFFSET_LUAU_LOAD          0x44bc110
 #define OFFSET_LUA_PCALL          0x4490fec
+#define OFFSET_LUA_PUSHCCLOSUREK  0x448f9fc
+#define OFFSET_SPAWN              0x19a56ec
 
 // --- Pass-Through Window ---
 @interface PassThroughWindow : UIWindow
@@ -40,10 +42,14 @@ static PassThroughWindow *overlayWindow = nil;
 // --- Executor Logic ---
 typedef int (*lua_pcall_t)(void* L, int nargs, int nresults, int errfunc);
 typedef int (*luau_load_t)(void* L, const char* chunkname, const char* data, size_t size, int env);
+typedef void (*lua_pushcclosurek_t)(void* L, void* fn, const char* debugname, int nup, void* cont);
+typedef void (*spawn_t)(void* L);
 
 static void* g_L = NULL;
 bool g_is_injected = false;
 static NSMutableArray<NSString *> *g_scriptQueue = nil;
+static const char* g_current_script_source = NULL;
+static size_t g_current_script_size = 0;
 
 static void* orig_job_step = NULL;
 
@@ -73,7 +79,7 @@ void SporkLog(NSString *format, ...) {
 
 bool safe_read(void* address, void* buffer, size_t size) {
     uintptr_t addr = STRIP_PAC(address);
-    if (addr < 0x100000000 || addr > 0x8000000000) return false;
+    if (addr < 0x100000000 || addr > 0x400000000) return false;
     
     vm_size_t out_size;
     kern_return_t kr = vm_read_overwrite(mach_task_self(), (vm_address_t)addr, (vm_size_t)size, (vm_address_t)buffer, &out_size);
@@ -91,7 +97,7 @@ uintptr_t get_robloxlib_base(void) {
     return 0;
 }
 
-// Bulletproof scanner with full global_State validation
+// Bounded scanner to completely eliminate 0x7100... and 0xf940... false positives
 void* FindLuaState(void* base_ptr) {
     if (!base_ptr) return NULL;
     uintptr_t base = STRIP_PAC(base_ptr);
@@ -101,36 +107,46 @@ void* FindLuaState(void* base_ptr) {
         if (!safe_read((void*)(base + i), &ptr, 8)) continue;
         
         uintptr_t stripped_ptr = STRIP_PAC(ptr);
-        if (stripped_ptr > 0x100000000 && stripped_ptr < 0x8000000000) {
+        // The strict bounds check: iOS heap is between 0x100000000 and 0x400000000
+        if (stripped_ptr > 0x100000000 && stripped_ptr < 0x400000000) {
             uint8_t tt = 0;
-            if (!safe_read((void*)(stripped_ptr + 0x2), &tt, 1) || tt != 9) continue;
+            if (!safe_read((void*)(stripped_ptr + 0x2), &tt, 1)) continue;
             
-            void* global_ptr = NULL;
-            if (!safe_read((void*)(stripped_ptr + 0x78), &global_ptr, 8)) continue;
-            
-            uintptr_t stripped_global = STRIP_PAC(global_ptr);
-            if (stripped_global < 0x100000000 || stripped_global > 0x8000000000) continue;
-            
-            void* mainthread = NULL;
-            if (!safe_read((void*)(stripped_global + 0x1a0), &mainthread, 8)) continue;
-            
-            uintptr_t stripped_mt = STRIP_PAC(mainthread);
-            if (stripped_mt > 0x100000000 && stripped_mt < 0x8000000000) {
-                // Verify mainthread is actually a lua_State
-                uint8_t mt_tt = 0;
-                if (!safe_read((void*)(stripped_mt + 0x2), &mt_tt, 1) || mt_tt != 9) continue;
+            if (tt == 9) { // LUA_TTHREAD
+                void* global_ptr = NULL;
+                if (!safe_read((void*)(stripped_ptr + 0x78), &global_ptr, 8)) continue;
                 
-                // Verify mainthread's global pointer matches the one we found
-                void* mt_global = NULL;
-                if (!safe_read((void*)(stripped_mt + 0x78), &mt_global, 8)) continue;
-                
-                if (STRIP_PAC(mt_global) == stripped_global) {
-                    return mainthread;
+                uintptr_t stripped_global = STRIP_PAC(global_ptr);
+                if (stripped_global > 0x100000000 && stripped_global < 0x400000000) {
+                    void* mainthread = NULL;
+                    if (safe_read((void*)(stripped_global + 0x1a0), &mainthread, 8)) {
+                        uintptr_t stripped_mt = STRIP_PAC(mainthread);
+                        if (stripped_mt > 0x100000000 && stripped_mt < 0x400000000) {
+                            return mainthread;
+                        }
+                    }
                 }
             }
         }
     }
     return NULL;
+}
+
+// The C function that runs the script safely on the engine thread
+int my_script_runner(void* L) {
+    uintptr_t base = get_robloxlib_base();
+    luau_load_t luau_load = (luau_load_t)(base + OFFSET_LUAU_LOAD);
+    lua_pcall_t lua_pcall = (lua_pcall_t)(base + OFFSET_LUA_PCALL);
+
+    SporkLog(@"Running script on engine thread...");
+    int status = luau_load(L, "SporkScript", g_current_script_source, g_current_script_size, 0);
+    if (status == 0) {
+        lua_pcall(L, 0, 0, 0);
+        SporkLog(@"Success: Script executed!");
+    } else {
+        SporkLog(@"Error: Compile/Load Failed with status %d", status);
+    }
+    return 0;
 }
 
 // --- VTable Hook for Job::step ---
@@ -139,20 +155,18 @@ void my_job_step(void* job) {
         NSString *script = g_scriptQueue.firstObject;
         [g_scriptQueue removeObjectAtIndex:0];
         
+        g_current_script_source = [script UTF8String];
+        g_current_script_size = strlen(g_current_script_source);
+
         uintptr_t base = get_robloxlib_base();
-        luau_load_t luau_load = (luau_load_t)(base + OFFSET_LUAU_LOAD);
-        lua_pcall_t lua_pcall = (lua_pcall_t)(base + OFFSET_LUA_PCALL);
+        lua_pushcclosurek_t lua_pushcclosurek = (lua_pushcclosurek_t)(base + OFFSET_LUA_PUSHCCLOSUREK);
+        spawn_t spawn = (spawn_t)(base + OFFSET_SPAWN);
+
+        SporkLog(@"Job::step hooked! Spawning script...");
         
-        SporkLog(@"Job::step hooked! Executing script...");
-        const char *source = [script UTF8String];
-        
-        int status = luau_load(g_L, "SporkScript", source, strlen(source), 0);
-        if (status == 0) {
-            lua_pcall(g_L, 0, 0, 0);
-            SporkLog(@"Success: Script executed!");
-        } else {
-            SporkLog(@"Error: Compile/Load Failed with status %d", status);
-        }
+        // Push our C function and let Roblox spawn it safely
+        lua_pushcclosurek(g_L, (void*)my_script_runner, "SporkRunner", 0, NULL);
+        spawn(g_L);
     }
     
     // Call the original step function
@@ -225,16 +239,13 @@ bool InjectExecutor(void) {
 
     // --- VTable Hook ---
     void** original_vtable = *(void***)target_job;
-    orig_job_step = original_vtable[0]; // Job::step is the first function in the vtable
+    orig_job_step = original_vtable[0]; 
     
-    // Create a copy of the vtable in heap memory
     void** new_vtable = (void**)malloc(0x1000);
     memcpy(new_vtable, original_vtable, 0x1000);
     
-    // Replace index 0 with our hook
     new_vtable[0] = (void*)my_job_step;
     
-    // Point the Job's vtable to our new one
     uintptr_t job_page = (uintptr_t)target_job & ~0xFFF;
     vm_protect(mach_task_self(), job_page, 0x4000, false, VM_PROT_READ | VM_PROT_WRITE);
     *(void***)target_job = new_vtable;
