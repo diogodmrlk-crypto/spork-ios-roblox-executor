@@ -20,6 +20,10 @@
 #define OFFSET_LUA_NEWTHREAD      0x448df3c
 #define OFFSET_LUAL_SANDBOXTHREAD 0x1a12ad4
 
+// Offsets for verification
+#define OFFSET_GLOBAL_STATE_MAINTHREAD 0x1a0
+#define OFFSET_LUA_STATE_GLOBAL        0x78
+
 // --- Pass-Through Window ---
 @interface PassThroughWindow : UIWindow
 @property (nonatomic, weak) UIView *interactableView1;
@@ -113,33 +117,32 @@ uintptr_t get_robloxlib_base(void) {
     return 0;
 }
 
-// --- Fixed Scanner for encrypted lua_State pointer ---
-void* find_lua_state_in_sc(void* script_context) {
+// --- Self-Validating Scanner for global_State and mainthread ---
+void* find_main_thread_in_sc(void* script_context) {
     uintptr_t ctx = (uintptr_t)script_context;
-    int candidate_count = 0;
     
     // Scan up to 0x2000 bytes of ScriptContext
     for (int i = 0; i < 0x2000; i += 8) {
-        uintptr_t addr = ctx + i;
-        uint32_t enc[2] = {0, 0};
-        if (!safe_read((void*)addr, enc, 8)) continue;
-
-        uint32_t low  = (uint32_t)addr - enc[0];
-        uint32_t high = (uint32_t)addr - enc[1];
-        uintptr_t L = ((uint64_t)high << 32) | low;
-
-        // FIXED BOUNDS: 64-bit iOS pointers can go up to 0x7FFFFFFFFFFF
-        if (L > 0x100000000 && L < 0x7FFFFFFFFFFF) {
-            uint8_t tt = 0;
-            if (safe_read((void*)(L + 0x2), &tt, 1)) {
-                if (tt == 8 || tt == 9) {
-                    SporkLog(@"Found encrypted L at offset 0x%X -> %p", i, (void*)L);
-                    return (void*)L;
-                } else if (candidate_count < 5) {
-                    SporkLog(@"Candidate at offset 0x%X: L = %p, tt = %d", i, (void*)L, tt);
-                    candidate_count++;
-                }
-            }
+        uintptr_t ptr_addr = ctx + i;
+        uintptr_t gs = 0;
+        if (!safe_read((void*)ptr_addr, &gs, 8)) continue;
+        
+        // Valid pointer check
+        if (gs < 0x100000000 || gs > 0x7FFFFFFFFFFF) continue;
+        
+        uintptr_t mt = 0;
+        // Read global_State->mainthread (0x1a0)
+        if (!safe_read((void*)(gs + OFFSET_GLOBAL_STATE_MAINTHREAD), &mt, 8)) continue;
+        
+        if (mt < 0x100000000 || mt > 0x7FFFFFFFFFFF) continue;
+        
+        uintptr_t gs_back = 0;
+        // Read lua_State->global (0x78) and verify it loops back to 'gs'
+        if (!safe_read((void*)(mt + OFFSET_LUA_STATE_GLOBAL), &gs_back, 8)) continue;
+        
+        if (gs_back == gs) {
+            SporkLog(@"Found global_State at SC+0x%X -> %p | mainthread: %p", i, (void*)gs, (void*)mt);
+            return (void*)mt;
         }
     }
     return NULL;
@@ -155,7 +158,7 @@ void my_job_step(void* job) {
         if (safe_read((char*)job + OFFSET_JOB_SCRIPT_CTX, &script_context, 8) && script_context) {
             script_context = (void*)STRIP_PAC(script_context);
             
-            void* live_L = find_lua_state_in_sc(script_context);
+            void* live_L = find_main_thread_in_sc(script_context);
             
             if (live_L) {
                 g_find_fail_count = 0;
@@ -170,7 +173,7 @@ void my_job_step(void* job) {
                 lua_newthread_t lua_newthread = (lua_newthread_t)(base + OFFSET_LUA_NEWTHREAD);
                 luaL_sandboxthread_t luaL_sandboxthread = (luaL_sandboxthread_t)(base + OFFSET_LUAL_SANDBOXTHREAD);
                 
-                SporkLog(@"Hook fired! live_L: %p", live_L);
+                SporkLog(@"Hook fired! mainthread: %p", live_L);
                 
                 in_hook_exec = 1;
                 int sig = sigsetjmp(hook_jump_buffer, 1);
@@ -197,7 +200,7 @@ void my_job_step(void* job) {
             } else {
                 g_find_fail_count++;
                 if (g_find_fail_count == 1 || g_find_fail_count % 60 == 0) {
-                    SporkLog(@"Scanner could not find lua_State. Retrying...");
+                    SporkLog(@"Scanner could not find global_State. Retrying...");
                 }
             }
         }
