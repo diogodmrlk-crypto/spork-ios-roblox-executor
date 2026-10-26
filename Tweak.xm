@@ -12,7 +12,8 @@
 #define OFFSET_JOB_SCRIPT_CTX   0x1b0
 #define OFFSET_LUAU_LOAD        0x44bc110
 #define OFFSET_LUA_PCALL        0x4490fec
-#define OFFSET_LUA_NEWTHREAD    0x448df3c
+#define OFFSET_LUA_GETTOP       0x448e048
+#define OFFSET_LUA_SETTOP       0x448e05c
 
 // --- Pass-Through Window ---
 @interface PassThroughWindow : UIWindow
@@ -40,7 +41,8 @@ static PassThroughWindow *overlayWindow = nil;
 // --- Executor Logic ---
 typedef int (*lua_pcall_t)(void* L, int nargs, int nresults, int errfunc);
 typedef int (*luau_load_t)(void* L, const char* chunkname, const char* data, size_t size, int env);
-typedef void* (*lua_newthread_t)(void* L);
+typedef int (*lua_gettop_t)(void* L);
+typedef void (*lua_settop_t)(void* L, int idx);
 
 static void* g_L = NULL;
 bool g_is_injected = false;
@@ -89,7 +91,6 @@ uintptr_t get_robloxlib_base(void) {
     return 0;
 }
 
-// Reverted to the exact logic that successfully found the state previously
 void* FindLuaState(void* base_ptr) {
     if (!base_ptr) return NULL;
     uintptr_t base = STRIP_PAC(base_ptr);
@@ -193,26 +194,26 @@ void ExecuteLuauSource(const char* source, size_t size) {
     uintptr_t base = get_robloxlib_base();
     luau_load_t luau_load = (luau_load_t)(base + OFFSET_LUAU_LOAD);
     lua_pcall_t lua_pcall = (lua_pcall_t)(base + OFFSET_LUA_PCALL);
-    lua_newthread_t lua_newthread = (lua_newthread_t)(base + OFFSET_LUA_NEWTHREAD);
-
-    SporkLog(@"Creating new thread...");
-    void* new_L = lua_newthread(g_L);
-    if (!new_L) {
-        SporkLog(@"Error: Failed to create thread.");
-        return;
-    }
+    lua_gettop_t lua_gettop = (lua_gettop_t)(base + OFFSET_LUA_GETTOP);
+    lua_settop_t lua_settop = (lua_settop_t)(base + OFFSET_LUA_SETTOP);
 
     SporkLog(@"Compiling and executing source...");
     
+    // Save the current stack position
+    int top = lua_gettop(g_L);
+    
     // Pass 0 for env to use the default global environment
-    int status = luau_load(new_L, "SporkScript", source, size, 0);
+    int status = luau_load(g_L, "SporkScript", source, size, 0);
     
     if (status == 0) {
-        lua_pcall(new_L, 0, 0, 0);
+        lua_pcall(g_L, 0, 0, 0);
         SporkLog(@"Success: Source Executed Successfully!");
     } else {
         SporkLog(@"Error: Compile/Load Failed with status %d", status);
     }
+    
+    // Restore the stack position to prevent corrupting the game loop
+    lua_settop(g_L, top);
 }
 
 __attribute__((constructor))
