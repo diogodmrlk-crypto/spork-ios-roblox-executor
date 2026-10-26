@@ -42,6 +42,7 @@ typedef int (*luau_load_t)(void* L, const char* chunkname, const char* data, siz
 
 static void* g_L = NULL;
 bool g_is_injected = false;
+static NSMutableArray<NSString *> *g_scriptQueue = nil;
 
 // --- Logging System ---
 NSMutableArray<NSString *> *g_logs = nil;
@@ -181,24 +182,43 @@ bool InjectExecutor(void) {
     return false;
 }
 
-void ExecuteLuauSource(const char* source, size_t size) {
-    if (!g_is_injected || !g_L) {
-        return;
-    }
+// --- Safe Scheduler ---
+void ProcessScriptQueue() {
+    if (!g_is_injected || !g_L || !g_scriptQueue || g_scriptQueue.count == 0) return;
+
+    NSString *script = g_scriptQueue.firstObject;
+    [g_scriptQueue removeObjectAtIndex:0];
 
     uintptr_t base = get_robloxlib_base();
     luau_load_t luau_load = (luau_load_t)(base + OFFSET_LUAU_LOAD);
     lua_pcall_t lua_pcall = (lua_pcall_t)(base + OFFSET_LUA_PCALL);
 
-    // No lua_settop! Just load and execute.
-    int status = luau_load(g_L, "SporkScript", source, size, 0);
+    const char *source = [script UTF8String];
+    SporkLog(@"Executing queued script safely...");
     
+    int status = luau_load(g_L, "SporkScript", source, strlen(source), 0);
     if (status == 0) {
         lua_pcall(g_L, 0, 0, 0);
-        SporkLog(@"Success: Source Executed Successfully!");
+        SporkLog(@"Success: Queued script executed!");
     } else {
         SporkLog(@"Error: Compile/Load Failed with status %d", status);
     }
+}
+
+@interface SporkScheduler : NSObject
++ (void)tick;
+@end
+@implementation SporkScheduler
++ (void)tick { ProcessScriptQueue(); }
+@end
+
+void ExecuteLuauSource(const char* source, size_t size) {
+    if (!g_is_injected || !g_L) return;
+    if (!g_scriptQueue) g_scriptQueue = [NSMutableArray new];
+    
+    NSString *script = [NSString stringWithUTF8String:source];
+    [g_scriptQueue addObject:script];
+    SporkLog(@"Script queued for execution.");
 }
 
 __attribute__((constructor))
@@ -231,5 +251,13 @@ static void init() {
         
         overlayWindow.interactableView1 = vc.mainContainer;
         overlayWindow.interactableView2 = vc.floatingButton;
+        
+        g_scriptQueue = [NSMutableArray new];
+        // Start the safe execution loop (60 FPS)
+        [NSTimer scheduledTimerWithTimeInterval:1.0/60.0
+                                         target:[SporkScheduler class]
+                                       selector:@selector(tick)
+                                       userInfo:nil
+                                        repeats:YES];
     });
 }
