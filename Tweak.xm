@@ -2,7 +2,7 @@
 #import <mach-o/dyld.h>
 #import <string.h>
 #import "SporkUI.h"
-#include "Dobby/dobby.h"
+#include "dobby.h"
 
 // --- Offsets for Roblox 2.744.0.1077 (Relative to RobloxLib) ---
 #define OFFSET_LUA_GETTOP       0x448e048
