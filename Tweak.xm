@@ -45,16 +45,21 @@ typedef void* (*get_global_state_t)(void*);
 static void* g_L = NULL;
 bool g_is_injected = false;
 
-// Memory scanner to find lua_State by looking for tt == 8 (LUA_TTHREAD)
+// Memory scanner to find lua_State
 void* FindLuaState(void* base_ptr) {
     if (!base_ptr) return NULL;
-    for (int i = 0; i < 0x2000; i += 8) {
+    for (int i = 0; i < 0x10000; i += 8) {
         void* ptr = *(void**)((char*)base_ptr + i);
         if ((uintptr_t)ptr > 0x100000000 && (uintptr_t)ptr < 0x8000000000) {
             uint8_t tt = *(uint8_t*)((char*)ptr + 0x2); // lua_State::tt
             void* global = *(void**)((char*)ptr + 0x78); // lua_State::global
-            if (tt == 8 && (uintptr_t)global > 0x100000000) {
-                return ptr;
+            
+            // FIXED: LUA_TTHREAD is 9, not 8
+            if (tt == 9 && (uintptr_t)global > 0x100000000) {
+                void* mainthread = *(void**)((char*)global + 0x1a0); // global_State::mainthread
+                if ((uintptr_t)mainthread > 0x100000000) {
+                    return ptr;
+                }
             }
         }
     }
@@ -71,6 +76,20 @@ bool InjectExecutor(void) {
         return false;
     }
     
+    get_global_state_t get_gs = (get_global_state_t)(base + OFFSET_GET_GLOBAL_STATE);
+    
+    // Strategy 1: get_global_state(task_scheduler)
+    void* global_state = get_gs(task_scheduler);
+    if (global_state && (uintptr_t)global_state > 0x100000000) {
+        void* mainthread = *(void**)((char*)global_state + OFFSET_GS_MAINTHREAD);
+        if (mainthread && (uintptr_t)mainthread > 0x100000000) {
+            g_L = mainthread;
+            NSLog(@"[Spork] Found L via get_gs(task_scheduler): %p", g_L);
+            g_is_injected = true;
+            return true;
+        }
+    }
+    
     // 2. Iterate through jobs to find WaitingHybridScriptsJob
     uintptr_t start = *(uintptr_t*)((char*)task_scheduler + OFFSET_TS_JOBS_START);
     uintptr_t end = *(uintptr_t*)((char*)task_scheduler + OFFSET_TS_JOBS_END);
@@ -83,8 +102,7 @@ bool InjectExecutor(void) {
         
         uintptr_t str_ptr = *(uintptr_t*)((char*)j + OFFSET_JOB_NAME);
         if (str_ptr > 0x100000000) {
-            const char* name = (const char*)str_ptr;
-            if (strcmp(name, "WaitingHybridScriptsJob") == 0) {
+            if (strcmp((const char*)str_ptr, "WaitingHybridScriptsJob") == 0) {
                 job = j;
                 script_context = *(void**)((char*)j + OFFSET_JOB_SCRIPT_CTX);
                 break;
@@ -97,33 +115,44 @@ bool InjectExecutor(void) {
         return false;
     }
     
-    // Strategy 1: Scan the Job for lua_State
-    g_L = FindLuaState(job);
-    if (g_L) {
-        NSLog(@"[Spork] Found lua_State via Job scan! %p", g_L);
-        g_is_injected = true;
-        return true;
-    }
-    
-    // Strategy 2: Scan the ScriptContext for lua_State
-    g_L = FindLuaState(script_context);
-    if (g_L) {
-        NSLog(@"[Spork] Found lua_State via ScriptContext scan! %p", g_L);
-        g_is_injected = true;
-        return true;
-    }
-    
-    // Strategy 3: Try get_global_state(job)
-    get_global_state_t get_gs = (get_global_state_t)(base + OFFSET_GET_GLOBAL_STATE);
-    void* global_state = get_gs(job);
+    // Strategy 2: get_global_state(job)
+    global_state = get_gs(job);
     if (global_state && (uintptr_t)global_state > 0x100000000) {
         void* mainthread = *(void**)((char*)global_state + OFFSET_GS_MAINTHREAD);
         if (mainthread && (uintptr_t)mainthread > 0x100000000) {
             g_L = mainthread;
-            NSLog(@"[Spork] Found lua_State via get_global_state(job)! %p", g_L);
+            NSLog(@"[Spork] Found L via get_gs(job): %p", g_L);
             g_is_injected = true;
             return true;
         }
+    }
+    
+    // Strategy 3: get_global_state(script_context)
+    global_state = get_gs(script_context);
+    if (global_state && (uintptr_t)global_state > 0x100000000) {
+        void* mainthread = *(void**)((char*)global_state + OFFSET_GS_MAINTHREAD);
+        if (mainthread && (uintptr_t)mainthread > 0x100000000) {
+            g_L = mainthread;
+            NSLog(@"[Spork] Found L via get_gs(script_context): %p", g_L);
+            g_is_injected = true;
+            return true;
+        }
+    }
+    
+    // Strategy 4: Scan ScriptContext for lua_State (tt == 9)
+    g_L = FindLuaState(script_context);
+    if (g_L) {
+        NSLog(@"[Spork] Found L via ScriptContext scan: %p", g_L);
+        g_is_injected = true;
+        return true;
+    }
+    
+    // Strategy 5: Scan Job for lua_State
+    g_L = FindLuaState(job);
+    if (g_L) {
+        NSLog(@"[Spork] Found L via Job scan: %p", g_L);
+        g_is_injected = true;
+        return true;
     }
 
     NSLog(@"[Spork] Injection failed: Could not find lua_State.");
