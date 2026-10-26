@@ -4,9 +4,9 @@
 
 // --- Offsets for Roblox 2.744.0.1077 ---
 #define OFFSET_GET_GLOBAL_STATE 0x19ce768
+#define OFFSET_GS_MAINTHREAD    0x1a0
 #define OFFSET_LUAU_LOAD        0x44bc110
 #define OFFSET_LUA_PCALL        0x4490fec
-#define OFFSET_GS_MAINTHREAD    0x1a0
 
 // --- Pass-Through Window ---
 @interface PassThroughWindow : UIWindow
@@ -44,26 +44,26 @@ bool InjectExecutor(void) {
     
     uintptr_t base = (uintptr_t)_dyld_get_image_header(0);
     
-    // Call get_global_state from your offsets.h
+    // Call get_global_state from your offsets
     get_global_state_t get_gs = (get_global_state_t)(base + OFFSET_GET_GLOBAL_STATE);
     void* global_state = get_gs();
     
     if (global_state) {
-        // Read mainthread offset (0x1a0) from structs.h to get lua_State
+        // Read mainthread offset (0x1a0) to get lua_State
         g_L = *(void**)((char*)global_state + OFFSET_GS_MAINTHREAD);
-        NSLog(@"[Spork] Injected! lua_State: %p", g_L);
+        NSLog(@"[Spork] Successfully Injected! lua_State: %p", g_L);
+        return true;
     } else {
-        NSLog(@"[Spork] Inject failed: global_State is NULL");
+        NSLog(@"[Spork] Inject failed: global_State is NULL.");
+        return false;
     }
-    
-    return true;
 }
 
 void ExecuteLuauBytecode(const char* bytecode, size_t size) {
     if (!g_is_injected) return;
     
     if (!g_L) {
-        NSLog(@"[Spork] Error: Lua State is NULL. Wait until you load into a game, then click Inject.");
+        NSLog(@"[Spork] Error: Lua State is NULL. Wait until you fully load into a game, then click Inject.");
         return;
     }
 
