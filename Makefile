@@ -4,12 +4,21 @@ INSTALL_TARGET_PROCESSES = Roblox
 
 include $(THEOS)/makefiles/common.mk
 
-# Find ALL directories inside Dobby, but exclude the TINYSTL subfolder to prevent Apple header collisions
+# Find ALL directories inside Dobby, but exclude TINYSTL to prevent Apple header collisions
 DOBBY_INCLUDES = $(addprefix -I, $(shell find Dobby -type d | grep -v "/TINYSTL"))
 
 LIBRARY_NAME = libdobby
 libdobby_FILES = $(shell find Dobby/source -name '*.cc' -o -name '*.c' | grep -v -E '/(x64|x86|Windows|Linux)/')
-libdobby_CCFLAGS = -std=c++14 -fno-exceptions -fno-rtti $(DOBBY_INCLUDES) -Wno-module-import-in-extern-c
+
+# Suppress the strict C++ warnings that Xcode 26 treats as fatal errors
+libdobby_CCFLAGS = -std=c++14 -fno-exceptions -fno-rtti $(DOBBY_INCLUDES) \
+                   -Wno-module-import-in-extern-c \
+                   -Wno-c++17-extensions \
+                   -Wno-reorder-ctor \
+                   -Wno-unused-but-set-variable \
+                   -Wno-sometimes-uninitialized \
+                   -Wno-error
+
 include $(THEOS_MAKE_PATH)/library.mk
 
 TWEAK_NAME = Spork
