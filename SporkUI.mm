@@ -1,7 +1,9 @@
 #import "SporkUI.h"
 
-// Declare the external execution function from Tweak.xm
+// Declare external functions from Tweak.xm
 extern void ExecuteLuauBytecode(const char* bytecode, size_t size);
+extern bool InjectExecutor(void);
+extern bool g_is_injected;
 
 // --- Custom Button for Squish Effect ---
 @interface SporkButton : UIButton
@@ -38,6 +40,10 @@ extern void ExecuteLuauBytecode(const char* bytecode, size_t size);
 @property (nonatomic, strong) UITextView *scriptEditor;
 @property (nonatomic, strong) UILabel *tabLabel;
 @property (nonatomic) NSInteger tabCounter;
+
+// Inject button references
+@property (nonatomic, strong) SporkButton *injectBtn;
+@property (nonatomic, strong) UILabel *statusLabel;
 @end
 
 @implementation SporkViewController
@@ -54,7 +60,7 @@ extern void ExecuteLuauBytecode(const char* bytecode, size_t size);
     [self setupHacksTab];
     [self setupFloatingButton];
     
-    [self switchTab:3];
+    [self switchTab:1]; // Default to Home tab so they see Inject
 }
 
 #pragma mark - Setup UI
@@ -314,22 +320,27 @@ extern void ExecuteLuauBytecode(const char* bytecode, size_t size);
     
     UILabel *title = [[UILabel alloc] init];
     title.translatesAutoresizingMaskIntoConstraints = NO;
-    title.text = @"Key System Status";
+    title.text = @"Executor Status";
     title.textColor = [UIColor whiteColor];
     title.font = [UIFont boldSystemFontOfSize:16];
     [self.homeTabView addSubview:title];
     
-    UIView *progressBg = [[UIView alloc] init];
-    progressBg.translatesAutoresizingMaskIntoConstraints = NO;
-    progressBg.backgroundColor = [UIColor darkGrayColor];
-    progressBg.layer.cornerRadius = 6;
-    [self.homeTabView addSubview:progressBg];
+    self.statusLabel = [[UILabel alloc] init];
+    self.statusLabel.translatesAutoresizingMaskIntoConstraints = NO;
+    self.statusLabel.text = @"Not Injected";
+    self.statusLabel.textColor = [UIColor lightGrayColor];
+    self.statusLabel.font = [UIFont systemFontOfSize:12];
+    [self.homeTabView addSubview:self.statusLabel];
     
-    UIView *progressFill = [[UIView alloc] init];
-    progressFill.translatesAutoresizingMaskIntoConstraints = NO;
-    progressFill.backgroundColor = [UIColor colorWithRed:0.2 green:0.8 blue:0.2 alpha:1.0];
-    progressFill.layer.cornerRadius = 6;
-    [progressBg addSubview:progressFill];
+    self.injectBtn = [SporkButton buttonWithType:UIButtonTypeSystem];
+    self.injectBtn.translatesAutoresizingMaskIntoConstraints = NO;
+    [self.injectBtn setTitle:@"Inject Executor" forState:UIControlStateNormal];
+    [self.injectBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    self.injectBtn.backgroundColor = [UIColor colorWithRed:0.0 green:0.5 blue:1.0 alpha:1.0];
+    self.injectBtn.layer.cornerRadius = 8;
+    self.injectBtn.titleLabel.font = [UIFont boldSystemFontOfSize:14];
+    [self.injectBtn addTarget:self action:@selector(injectExecutorAction) forControlEvents:UIControlEventTouchUpInside];
+    [self.homeTabView addSubview:self.injectBtn];
 
     [NSLayoutConstraint activateConstraints:@[
         [self.homeTabView.topAnchor constraintEqualToAnchor:self.contentContainer.topAnchor constant:15],
@@ -338,14 +349,14 @@ extern void ExecuteLuauBytecode(const char* bytecode, size_t size);
         [self.homeTabView.bottomAnchor constraintEqualToAnchor:self.contentContainer.bottomAnchor constant:-15],
         [title.topAnchor constraintEqualToAnchor:self.homeTabView.topAnchor constant:10],
         [title.leadingAnchor constraintEqualToAnchor:self.homeTabView.leadingAnchor constant:10],
-        [progressBg.topAnchor constraintEqualToAnchor:title.bottomAnchor constant:10],
-        [progressBg.leadingAnchor constraintEqualToAnchor:self.homeTabView.leadingAnchor constant:10],
-        [progressBg.trailingAnchor constraintEqualToAnchor:self.homeTabView.trailingAnchor constant:-10],
-        [progressBg.heightAnchor constraintEqualToConstant:12],
-        [progressFill.leadingAnchor constraintEqualToAnchor:progressBg.leadingAnchor],
-        [progressFill.topAnchor constraintEqualToAnchor:progressBg.topAnchor],
-        [progressFill.bottomAnchor constraintEqualToAnchor:progressBg.bottomAnchor],
-        [progressFill.widthAnchor constraintEqualToAnchor:progressBg.widthAnchor multiplier:0.7]
+        
+        [self.statusLabel.topAnchor constraintEqualToAnchor:title.bottomAnchor constant:8],
+        [self.statusLabel.leadingAnchor constraintEqualToAnchor:self.homeTabView.leadingAnchor constant:10],
+        
+        [self.injectBtn.topAnchor constraintEqualToAnchor:self.statusLabel.bottomAnchor constant:20],
+        [self.injectBtn.leadingAnchor constraintEqualToAnchor:self.homeTabView.leadingAnchor constant:10],
+        [self.injectBtn.trailingAnchor constraintEqualToAnchor:self.homeTabView.trailingAnchor constant:-10],
+        [self.injectBtn.heightAnchor constraintEqualToConstant:44]
     ]];
 }
 
@@ -381,7 +392,6 @@ extern void ExecuteLuauBytecode(const char* bytecode, size_t size);
         btn.contentEdgeInsets = UIEdgeInsetsMake(0, 10, 0, 0);
         [btn.heightAnchor constraintEqualToConstant:30].active = YES;
         
-        // Add specific action for Infinite Yield
         if ([name isEqualToString:@"Infinite Yield"]) {
             [btn addTarget:self action:@selector(executeInfiniteYield) forControlEvents:UIControlEventTouchUpInside];
         }
@@ -441,11 +451,24 @@ extern void ExecuteLuauBytecode(const char* bytecode, size_t size);
     } completion:nil];
 }
 
-// ADDED THIS METHOD FOR INFINITE YIELD
+- (void)injectExecutorAction {
+    if (InjectExecutor()) {
+        self.statusLabel.text = @"Injected Successfully!";
+        self.statusLabel.textColor = [UIColor greenColor];
+        self.injectBtn.backgroundColor = [UIColor darkGrayColor];
+        [self.injectBtn setTitle:@"Injected" forState:UIControlStateNormal];
+        self.injectBtn.enabled = NO;
+    }
+}
+
 - (void)executeInfiniteYield {
-    // This is a real, valid Luau bytecode array for: print("Infinite Yield Loaded!")
-    // To make this work with the real IY, compile Infinite Yield to Luau bytecode
-    // and replace this array with the output.
+    if (!g_is_injected) {
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Error" message:@"Please go to the Home tab and Inject first!" preferredStyle:UIAlertControllerStyleAlert];
+        [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+        [self presentViewController:alert animated:YES completion:nil];
+        return;
+    }
+
     static const char iy_bytecode[] = {
         0x1B, 0x4C, 0x75, 0x61, 0x75, 0x51, 0x00, 0x01, 0x04, 0x04, 0x04, 0x08, 0x00, 
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
@@ -461,14 +484,20 @@ extern void ExecuteLuauBytecode(const char* bytecode, size_t size);
 
     ExecuteLuauBytecode(iy_bytecode, sizeof(iy_bytecode));
     
-    // Show confirmation
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Spork" message:@"Infinite Yield bytecode sent to executor." preferredStyle:UIAlertControllerStyleAlert];
     [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
     [self presentViewController:alert animated:YES completion:nil];
 }
 
 - (void)executeScriptAction {
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Spork" message:@"Luau execution is currently disabled. The UI is stable!" preferredStyle:UIAlertControllerStyleAlert];
+    if (!g_is_injected) {
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Error" message:@"Please go to the Home tab and Inject first!" preferredStyle:UIAlertControllerStyleAlert];
+        [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+        [self presentViewController:alert animated:YES completion:nil];
+        return;
+    }
+    
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Spork" message:@"Custom script execution is disabled in this build. Use Infinite Yield to test!" preferredStyle:UIAlertControllerStyleAlert];
     [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
     [self presentViewController:alert animated:YES completion:nil];
 }
