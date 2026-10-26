@@ -106,6 +106,7 @@ uintptr_t get_robloxlib_base(void) {
     return 0;
 }
 
+// Strict validation to prevent false positives
 void* FindLuaState(void* base_ptr) {
     if (!base_ptr) return NULL;
     uintptr_t base = STRIP_PAC(base_ptr);
@@ -127,7 +128,17 @@ void* FindLuaState(void* base_ptr) {
                 if (stripped_global > 0x100000000 && stripped_global < 0x7FFFFFFFFFFF) {
                     void* mainthread = NULL;
                     if (safe_read((void*)(stripped_global + 0x1a0), &mainthread, 8)) {
-                        if (STRIP_PAC(mainthread) > 0x100000000) {
+                        uintptr_t stripped_mt = STRIP_PAC(mainthread);
+                        if (stripped_mt > 0x100000000 && stripped_mt < 0x7FFFFFFFFFFF) {
+                            // Validate the mainthread itself
+                            uint8_t mt_tt = 0;
+                            if (!safe_read((void*)(stripped_mt + 0x2), &mt_tt, 1) || mt_tt != 9) continue;
+                            
+                            // Validate it has an active CallInfo frame
+                            void* base_ci = NULL;
+                            if (!safe_read((void*)(stripped_mt + 0x18), &base_ci, 8)) continue;
+                            if (STRIP_PAC(base_ci) < 0x100000000) continue;
+
                             return mainthread;
                         }
                     }
@@ -175,23 +186,12 @@ bool InjectExecutor(void) {
         uintptr_t stripped_j = STRIP_PAC(j);
         jobCount++;
         
-        void* script_context = NULL;
-        if (safe_read((char*)stripped_j + OFFSET_JOB_SCRIPT_CTX, &script_context, 8) && script_context) {
-            script_context = (void*)STRIP_PAC(script_context);
-            
-            g_L = FindLuaState(script_context);
-            if (g_L) {
-                SporkLog(@"Success: Found mainthread in ScriptContext: %p", g_L);
-                g_is_injected = true;
-                return true;
-            }
-            
-            g_L = FindLuaState((void*)stripped_j);
-            if (g_L) {
-                SporkLog(@"Success: Found mainthread in Job: %p", g_L);
-                g_is_injected = true;
-                return true;
-            }
+        // Scan the Job directly (removed ScriptContext scan to avoid false positives)
+        g_L = FindLuaState((void*)stripped_j);
+        if (g_L) {
+            SporkLog(@"Success: Found mainthread in Job: %p", g_L);
+            g_is_injected = true;
+            return true;
         }
     }
     
@@ -222,7 +222,11 @@ void ProcessScriptQueue() {
     // Validate g_L before doing anything
     uint8_t tt;
     if (!safe_read((void*)((char*)g_L + 0x2), &tt, 1) || tt != 9) {
-        SporkLog(@"Error: g_L is no longer a valid thread (tt=%d)", tt);
+        // Don't spam the log if it's invalid, just clear the queue and reset
+        if (g_scriptQueue.count > 0) {
+            SporkLog(@"Error: g_L became invalid. Please Inject again.");
+            [g_scriptQueue removeAllObjects];
+        }
         return;
     }
 
