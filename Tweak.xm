@@ -1,15 +1,18 @@
 #import <UIKit/UIKit.h>
 #import <mach-o/dyld.h>
 #import <string.h>
-#import <ptrauth.h>
+#import <mach/mach.h>
+#import <mach/vm_map.h>
+#import <stdlib.h>
 #import "SporkUI.h"
 
-// Manually declare DobbyHook to bypass Xcode 26's C++ header bug
-extern "C" int DobbyHook(void *address, void *replace_func, void **origin_func);
-
 // --- Offsets for Roblox 2.744.0.1077 (Relative to RobloxLib) ---
-#define OFFSET_LUA_PCALL          0x4490fec
+#define OFFSET_TASKSCHEDULER      0x6a6d7c0
+#define OFFSET_TS_JOBS_START      0xd0
+#define OFFSET_TS_JOBS_END        0xd8
+#define OFFSET_JOB_SCRIPT_CTX     0x1b0
 #define OFFSET_LUAU_LOAD          0x44bc110
+#define OFFSET_LUA_PCALL          0x4490fec
 #define OFFSET_LUA_NEWTHREAD      0x448df3c
 #define OFFSET_LUAL_SANDBOXTHREAD 0x1a12ad4
 
@@ -45,7 +48,7 @@ typedef void (*luaL_sandboxthread_t)(void* L);
 bool g_is_injected = false;
 static NSMutableArray<NSString *> *g_scriptQueue = nil;
 
-static lua_pcall_t orig_lua_pcall = NULL;
+static void* orig_job_step = NULL;
 
 // --- Logging System ---
 NSMutableArray<NSString *> *g_logs = nil;
@@ -69,6 +72,17 @@ void SporkLog(NSString *format, ...) {
     });
 }
 
+#define STRIP_PAC(ptr) ((uintptr_t)(ptr) & 0x0000000FFFFFFFFF)
+
+bool safe_read(void* address, void* buffer, size_t size) {
+    uintptr_t addr = STRIP_PAC(address);
+    if (addr < 0x100000000 || addr > 0x400000000) return false;
+    
+    vm_size_t out_size;
+    kern_return_t kr = vm_read_overwrite(mach_task_self(), (vm_address_t)addr, (vm_size_t)size, (vm_address_t)buffer, &out_size);
+    return (kr == KERN_SUCCESS && out_size == size);
+}
+
 uintptr_t get_robloxlib_base(void) {
     uint32_t count = _dyld_image_count();
     for (uint32_t i = 0; i < count; i++) {
@@ -80,35 +94,88 @@ uintptr_t get_robloxlib_base(void) {
     return 0;
 }
 
-// --- Hook Function ---
-int my_lua_pcall(void* L, int nargs, int nresults, int errfunc) {
+void* FindLuaState(void* base_ptr) {
+    if (!base_ptr) return NULL;
+    uintptr_t base = STRIP_PAC(base_ptr);
+    
+    for (int i = 0; i < 0x200000; i += 8) {
+        void* ptr = NULL;
+        if (!safe_read((void*)(base + i), &ptr, 8)) continue;
+        
+        uintptr_t stripped_ptr = STRIP_PAC(ptr);
+        if (stripped_ptr > 0x100000000 && stripped_ptr < 0x400000000) {
+            uint8_t tt = 0;
+            if (!safe_read((void*)(stripped_ptr + 0x2), &tt, 1) || tt != 9) continue;
+            
+            void* global_ptr = NULL;
+            if (!safe_read((void*)(stripped_ptr + 0x78), &global_ptr, 8)) continue;
+            
+            uintptr_t stripped_global = STRIP_PAC(global_ptr);
+            if (stripped_global > 0x100000000 && stripped_global < 0x400000000) {
+                void* mainthread = NULL;
+                if (safe_read((void*)(stripped_global + 0x1a0), &mainthread, 8)) {
+                    uintptr_t stripped_mt = STRIP_PAC(mainthread);
+                    if (stripped_mt > 0x100000000 && stripped_mt < 0x400000000) {
+                        // FIX: Return the original PAC-signed pointer, NOT the stripped one!
+                        return mainthread; 
+                    }
+                }
+            }
+        }
+    }
+    return NULL;
+}
+
+// --- VTable Hook for Job::step ---
+void my_job_step(void* job) {
     if (g_scriptQueue && g_scriptQueue.count > 0) {
-        NSString *script = g_scriptQueue.firstObject;
-        [g_scriptQueue removeObjectAtIndex:0];
         
         uintptr_t base = get_robloxlib_base();
-        luau_load_t luau_load = (luau_load_t)(base + OFFSET_LUAU_LOAD);
-        lua_newthread_t lua_newthread = (lua_newthread_t)(base + OFFSET_LUA_NEWTHREAD);
-        luaL_sandboxthread_t luaL_sandboxthread = (luaL_sandboxthread_t)(base + OFFSET_LUAL_SANDBOXTHREAD);
+        void* script_context = NULL;
         
-        SporkLog(@"Hook triggered! Creating safe coroutine...");
-        
-        void* new_L = lua_newthread(L);
-        if (new_L) {
-            luaL_sandboxthread(new_L);
+        if (safe_read((char*)job + OFFSET_JOB_SCRIPT_CTX, &script_context, 8) && script_context) {
+            script_context = (void*)STRIP_PAC(script_context);
             
-            const char *source = [script UTF8String];
-            int status = luau_load(new_L, "SporkScript", source, strlen(source), 0);
-            if (status == 0) {
-                orig_lua_pcall(new_L, 0, 0, 0);
-                SporkLog(@"Success: LocalScript executed!");
+            // Get the valid PAC-signed L
+            void* live_L = FindLuaState(script_context);
+            
+            if (live_L) {
+                NSString *script = g_scriptQueue.firstObject;
+                [g_scriptQueue removeObjectAtIndex:0];
+                
+                luau_load_t luau_load = (luau_load_t)(base + OFFSET_LUAU_LOAD);
+                lua_pcall_t lua_pcall = (lua_pcall_t)(base + OFFSET_LUA_PCALL);
+                lua_newthread_t lua_newthread = (lua_newthread_t)(base + OFFSET_LUA_NEWTHREAD);
+                luaL_sandboxthread_t luaL_sandboxthread = (luaL_sandboxthread_t)(base + OFFSET_LUAL_SANDBOXTHREAD);
+                
+                SporkLog(@"Found L: %p. Creating coroutine...", live_L);
+                
+                void* new_L = lua_newthread(live_L);
+                if (new_L) {
+                    luaL_sandboxthread(new_L);
+
+                    const char *source = [script UTF8String];
+                    int status = luau_load(new_L, "SporkScript", source, strlen(source), 0);
+                    if (status == 0) {
+                        lua_pcall(new_L, 0, 0, 0);
+                        SporkLog(@"Success: LocalScript executed!");
+                    } else {
+                        SporkLog(@"Error: Compile/Load Failed with status %d", status);
+                    }
+                } else {
+                    SporkLog(@"Error: Failed to create new thread.");
+                }
             } else {
-                SporkLog(@"Error: Compile/Load Failed with status %d", status);
+                SporkLog(@"Error: Could not find a live thread.");
+                [g_scriptQueue removeAllObjects];
             }
         }
     }
     
-    return orig_lua_pcall(L, nargs, nresults, errfunc);
+    // Call the original step function
+    if (orig_job_step) {
+        ((void(*)(void*))orig_job_step)(job);
+    }
 }
 
 bool InjectExecutor(void) {
@@ -120,30 +187,63 @@ bool InjectExecutor(void) {
         SporkLog(@"Error: Failed to find RobloxLib base.");
         return false;
     }
-
-    void* target_pcall = (void*)(base + OFFSET_LUA_PCALL);
-    void* stripped_target = target_pcall;
-    void* stripped_hook = (void*)my_lua_pcall;
-
-    // Only strip PAC if the target supports Pointer Authentication (arm64e)
-#if defined(__arm64e__) && __has_feature(ptrauth_calls)
-    stripped_target = __builtin_ptrauth_strip(target_pcall, ptrauth_key_asia);
-    stripped_hook = __builtin_ptrauth_strip((void*)my_lua_pcall, ptrauth_key_asia);
-#endif
     
-    int ret = DobbyHook(stripped_target, stripped_hook, (void**)&orig_lua_pcall);
-    
-    if (ret == 0) {
-#if defined(__arm64e__) && __has_feature(ptrauth_calls)
-        orig_lua_pcall = (lua_pcall_t)ptrauth_sign_unauthenticated((void*)orig_lua_pcall, ptrauth_key_asia, 0);
-#endif
-        SporkLog(@"Success: Hooked lua_pcall!");
-        g_is_injected = true;
-        return true;
-    } else {
-        SporkLog(@"Error: DobbyHook failed with code %d", ret);
+    void* task_scheduler = NULL;
+    if (!safe_read((void*)(base + OFFSET_TASKSCHEDULER), &task_scheduler, 8) || !task_scheduler) {
+        SporkLog(@"Error: Failed to find TaskScheduler.");
         return false;
     }
+    task_scheduler = (void*)STRIP_PAC(task_scheduler);
+    
+    uintptr_t start = 0, end = 0;
+    safe_read((char*)task_scheduler + OFFSET_TS_JOBS_START, &start, 8);
+    safe_read((char*)task_scheduler + OFFSET_TS_JOBS_END, &end, 8);
+    
+    start = STRIP_PAC(start);
+    end = STRIP_PAC(end);
+
+    if (!start || !end || end <= start) {
+        SporkLog(@"Error: Invalid job list pointers.");
+        return false;
+    }
+
+    void* target_job = NULL;
+
+    for (uintptr_t ptr = start; ptr < end; ptr += 0x10) {
+        void* j = NULL;
+        if (!safe_read((void*)ptr, &j, 8) || !j) continue;
+        
+        uintptr_t stripped_j = STRIP_PAC(j);
+        
+        void* script_context = NULL;
+        if (safe_read((char*)stripped_j + OFFSET_JOB_SCRIPT_CTX, &script_context, 8) && script_context) {
+            target_job = j;
+            SporkLog(@"Success: Found Job with ScriptContext: %p", j);
+            break;
+        }
+    }
+    
+    if (!target_job) {
+        SporkLog(@"Error: Could not find a valid Job.");
+        return false;
+    }
+
+    // --- VTable Hook ---
+    void** original_vtable = *(void***)target_job;
+    orig_job_step = original_vtable[0]; 
+    
+    void** new_vtable = (void**)malloc(0x1000);
+    memcpy(new_vtable, original_vtable, 0x1000);
+    
+    new_vtable[0] = (void*)my_job_step;
+    
+    uintptr_t job_page = (uintptr_t)target_job & ~0xFFF;
+    vm_protect(mach_task_self(), job_page, 0x4000, false, VM_PROT_READ | VM_PROT_WRITE);
+    *(void***)target_job = new_vtable;
+    
+    SporkLog(@"Success: Hooked Job::step via VTable!");
+    g_is_injected = true;
+    return true;
 }
 
 void ExecuteLuauSource(const char* source, size_t size) {
