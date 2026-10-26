@@ -65,7 +65,7 @@ void SporkLog(NSString *format, ...) {
     });
 }
 
-#define STRIP_PAC(ptr) ((uintptr_t)(ptr) & 0x000000FFFFFFFFFF) // Mask top 8 bits safely
+#define STRIP_PAC(ptr) ((uintptr_t)(ptr) & 0x000000FFFFFFFFFF)
 
 bool safe_read(void* address, void* buffer, size_t size) {
     uintptr_t addr = STRIP_PAC(address);
@@ -87,12 +87,12 @@ uintptr_t get_robloxlib_base(void) {
     return 0;
 }
 
-// Robust lua_State finder that checks stack, stacksize, and totalbytes
+// Robust lua_State finder
 void* FindLuaState(void* base_ptr) {
     if (!base_ptr) return NULL;
     uintptr_t base = STRIP_PAC(base_ptr);
     
-    for (int i = 0; i < 0x200000; i += 8) { // Scan 2MB
+    for (int i = 0; i < 0x200000; i += 8) {
         void* ptr = NULL;
         if (!safe_read((void*)(base + i), &ptr, 8)) continue;
         
@@ -119,7 +119,7 @@ void* FindLuaState(void* base_ptr) {
                     if (totalbytes > 0 && totalbytes < 0x80000000 &&
                         STRIP_PAC(stack_ptr) > 0x100000000 &&
                         stacksize > 0 && stacksize < 1000000) {
-                        return (void*)stripped_ptr;
+                        return ptr; // RETURN SIGNED POINTER (Fix for EXC_BAD_ACCESS)
                     }
                 }
             }
@@ -165,29 +165,20 @@ bool InjectExecutor(void) {
         uintptr_t stripped_j = STRIP_PAC(j);
         jobCount++;
         
-        // Try to read the job name for logging (std::string data pointer is at 0x28)
-        char jobName[64] = {0};
-        void* str_ptr = NULL;
-        if (safe_read((void*)(stripped_j + 0x28), &str_ptr, 8) && str_ptr) {
-            safe_read((void*)STRIP_PAC(str_ptr), jobName, 63);
-        }
-        
         void* script_context = NULL;
         if (safe_read((char*)stripped_j + OFFSET_JOB_SCRIPT_CTX, &script_context, 8) && script_context) {
             script_context = (void*)STRIP_PAC(script_context);
             
-            // Strategy 1: Scan ScriptContext
             g_L = FindLuaState(script_context);
             if (g_L) {
-                SporkLog(@"Success: Found lua_State in ScriptContext of Job [%s]: %p", jobName, g_L);
+                SporkLog(@"Success: Found lua_State in ScriptContext: %p", g_L);
                 g_is_injected = true;
                 return true;
             }
             
-            // Strategy 2: Scan Job
             g_L = FindLuaState((void*)stripped_j);
             if (g_L) {
-                SporkLog(@"Success: Found lua_State in Job [%s]: %p", jobName, g_L);
+                SporkLog(@"Success: Found lua_State in Job: %p", g_L);
                 g_is_injected = true;
                 return true;
             }
@@ -205,8 +196,9 @@ void ExecuteLuauBytecode(const char* bytecode, size_t size) {
     }
 
     uintptr_t base = get_robloxlib_base();
-    luau_load_t luau_load = (luau_load_t)STRIP_PAC(base + OFFSET_LUAU_LOAD);
-    lua_pcall_t lua_pcall = (lua_pcall_t)STRIP_PAC(base + OFFSET_LUA_PCALL);
+    // Fix: Do not strip PAC from RobloxLib function pointers
+    luau_load_t luau_load = (luau_load_t)(base + OFFSET_LUAU_LOAD);
+    lua_pcall_t lua_pcall = (lua_pcall_t)(base + OFFSET_LUA_PCALL);
 
     SporkLog(@"Executing bytecode...");
     int status = luau_load(g_L, "SporkScript", bytecode, size, 0);
