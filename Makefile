@@ -4,14 +4,14 @@ INSTALL_TARGET_PROCESSES = Roblox
 
 include $(THEOS)/makefiles/common.mk
 
-# 1. Find ALL directories in Dobby, but exclude TINYSTL to prevent Apple header collisions
+# Find ALL directories in Dobby, but exclude TINYSTL to prevent Apple header collisions
 DOBBY_INCLUDES = $(addprefix -I, $(shell find Dobby -type d | grep -v "/TINYSTL"))
 
 LIBRARY_NAME = libdobby
-# 2. Exclude x86/Windows and the broken deprecated folder
-libdobby_FILES = $(shell find Dobby/source -name '*.cc' -o -name '*.c' | grep -v -E '/(x64|x86|Windows|Linux|deprecated)/')
+# Exclude x86/Windows and the deprecated folder (fixed regex to catch deprecated.Routing)
+libdobby_FILES = $(shell find Dobby/source -name '*.cc' -o -name '*.c' | grep -v -E '/(x64|x86|Windows|Linux|deprecated)')
 
-# 3. Disable Xcode modules and suppress warnings
+# Disable Xcode modules, suppress strict warnings, and add include paths
 libdobby_CCFLAGS = -std=c++14 -fno-exceptions -fno-rtti -fno-modules $(DOBBY_INCLUDES) -Wno-module-import-in-extern-c -Wno-error
 
 include $(THEOS_MAKE_PATH)/library.mk
