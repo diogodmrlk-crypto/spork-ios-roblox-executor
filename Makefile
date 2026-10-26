@@ -6,8 +6,7 @@ include $(THEOS)/makefiles/common.mk
 
 TWEAK_NAME = Spork
 
-# No fishhook.c, no substrate. Just your UI.
-Spork_FILES = Tweak.xm SporkUI.mm
+Spork_FILES = Tweak.xm SporkUI.mm fishhook.c
 
 Spork_OBJCFLAGS = -fobjc-arc
 Spork_OBJCCFLAGS = -fobjc-arc
