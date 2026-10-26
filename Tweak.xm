@@ -15,14 +15,10 @@
 #define OFFSET_JOB_SCRIPT_CTX     0x1b0
 
 // Lua functions
-#define OFFSET_LUAU_LOAD          0x44bc110  // luau_load (equivalent to luaL_loadbuffer)
+#define OFFSET_LUAU_LOAD          0x44bc110
 #define OFFSET_LUA_PCALL          0x4490fec
 #define OFFSET_LUA_NEWTHREAD      0x448df3c
 #define OFFSET_LUAL_SANDBOXTHREAD 0x1a12ad4
-
-// ScriptContext decryption offset and lua_State tt offset
-#define OFFSET_SCRIPT_CONTEXT_LUA_STATE_ARRAY 0x2B8
-#define OFFSET_LUA_STATE_TT                   0x2
 
 // --- Pass-Through Window ---
 @interface PassThroughWindow : UIWindow
@@ -54,7 +50,6 @@ typedef void* (*lua_newthread_t)(void* L);
 typedef void (*luaL_sandboxthread_t)(void* L);
 
 bool g_is_injected = false;
-int g_execution_method = 2; // Hardcoded to use a new thread (Method 2 logic)
 static NSMutableArray<NSString *> *g_scriptQueue = nil;
 static const char* g_current_script_source = NULL;
 static size_t g_current_script_size = 0;
@@ -116,6 +111,31 @@ uintptr_t get_robloxlib_base(void) {
     return 0;
 }
 
+// --- Scanner for encrypted lua_State pointer ---
+void* find_lua_state_in_sc(void* script_context) {
+    uintptr_t ctx = (uintptr_t)script_context;
+    // Scan first 0x1000 bytes of ScriptContext
+    for (int i = 0; i < 0x1000; i += 8) {
+        uintptr_t addr = ctx + i;
+        uint32_t enc[2] = {0, 0};
+        if (!safe_read((void*)addr, enc, 8)) continue;
+
+        // Standard Roblox pointer decryption formula
+        uint32_t low  = (uint32_t)addr - enc[0];
+        uint32_t high = (uint32_t)addr - enc[1];
+        uintptr_t L = ((uint64_t)high << 32) | low;
+
+        if (L > 0x100000000 && L < 0x400000000) {
+            uint8_t tt = 0;
+            if (safe_read((void*)(L + 0x2), &tt, 1) && tt == 9) {
+                SporkLog(@"Found encrypted L at offset 0x%X -> %p", i, (void*)L);
+                return (void*)L;
+            }
+        }
+    }
+    return NULL;
+}
+
 // --- VTable Hook for Job::step ---
 void my_job_step(void* job) {
     if (g_scriptQueue && g_scriptQueue.count > 0) {
@@ -126,67 +146,49 @@ void my_job_step(void* job) {
         if (safe_read((char*)job + OFFSET_JOB_SCRIPT_CTX, &script_context, 8) && script_context) {
             script_context = (void*)STRIP_PAC(script_context);
             
-            // Decrypt the lua_State pointer (kept from your previous working attempt)
-            uintptr_t ctx_addr = (uintptr_t)script_context;
-            uintptr_t encrypted_array_addr = ctx_addr + OFFSET_SCRIPT_CONTEXT_LUA_STATE_ARRAY;
+            void* live_L = find_lua_state_in_sc(script_context);
             
-            uint32_t encrypted[2] = {0, 0};
-            if (safe_read((void*)encrypted_array_addr, &encrypted, sizeof(encrypted))) {
-                uint32_t low  = (uint32_t)encrypted_array_addr - encrypted[0];
-                uint32_t high = (uint32_t)encrypted_array_addr - encrypted[1];
-                uintptr_t lua_state_ptr = ((uint64_t)high << 32) | low;
-                void* live_L = (void*)lua_state_ptr;
+            if (live_L) {
+                g_find_fail_count = 0;
+                NSString *script = g_scriptQueue.firstObject;
+                [g_scriptQueue removeObjectAtIndex:0];
                 
-                // Verify it's actually a thread (tt == 9 at offset 0x2)
-                uint8_t tt = 0;
-                if (safe_read((char*)live_L + OFFSET_LUA_STATE_TT, &tt, 1) && tt == 9) {
-                    g_find_fail_count = 0;
-                    NSString *script = g_scriptQueue.firstObject;
-                    [g_scriptQueue removeObjectAtIndex:0];
-                    
-                    g_current_script_source = [script UTF8String];
-                    g_current_script_size = strlen(g_current_script_source);
-                    
-                    // Resolve the function pointers using your offsets
-                    luau_load_t luau_load = (luau_load_t)(base + OFFSET_LUAU_LOAD);
-                    lua_pcall_t lua_pcall = (lua_pcall_t)(base + OFFSET_LUA_PCALL);
-                    lua_newthread_t lua_newthread = (lua_newthread_t)(base + OFFSET_LUA_NEWTHREAD);
-                    luaL_sandboxthread_t luaL_sandboxthread = (luaL_sandboxthread_t)(base + OFFSET_LUAL_SANDBOXTHREAD);
-                    
-                    SporkLog(@"Hook fired! live_L: %p", live_L);
-                    
-                    in_hook_exec = 1;
-                    int sig = sigsetjmp(hook_jump_buffer, 1);
-                    
-                    if (sig == 0) {
-                        // 1. Create a new thread to avoid corrupting the main engine state
-                        void* new_L = lua_newthread(live_L);
-                        if (new_L) {
-                            // 2. Sandbox the new thread
-                            luaL_sandboxthread(new_L);
-                            
-                            // 3. Load the script. Passing env=0 uses the thread's global environment.
-                            int status = luau_load(new_L, "SporkScript", g_current_script_source, g_current_script_size, 0);
-                            if (status == 0) {
-                                // 4. Execute the loaded script
-                                lua_pcall(new_L, 0, 0, 0);
-                                SporkLog(@"Executed successfully!");
-                            } else {
-                                SporkLog(@"luau_load failed. Status: %d", status);
-                            }
+                g_current_script_source = [script UTF8String];
+                g_current_script_size = strlen(g_current_script_source);
+                
+                luau_load_t luau_load = (luau_load_t)(base + OFFSET_LUAU_LOAD);
+                lua_pcall_t lua_pcall = (lua_pcall_t)(base + OFFSET_LUA_PCALL);
+                lua_newthread_t lua_newthread = (lua_newthread_t)(base + OFFSET_LUA_NEWTHREAD);
+                luaL_sandboxthread_t luaL_sandboxthread = (luaL_sandboxthread_t)(base + OFFSET_LUAL_SANDBOXTHREAD);
+                
+                SporkLog(@"Hook fired! live_L: %p", live_L);
+                
+                in_hook_exec = 1;
+                int sig = sigsetjmp(hook_jump_buffer, 1);
+                
+                if (sig == 0) {
+                    void* new_L = lua_newthread(live_L);
+                    if (new_L) {
+                        luaL_sandboxthread(new_L);
+                        int status = luau_load(new_L, "SporkScript", g_current_script_source, g_current_script_size, 0);
+                        if (status == 0) {
+                            lua_pcall(new_L, 0, 0, 0);
+                            SporkLog(@"Executed successfully!");
                         } else {
-                            SporkLog(@"lua_newthread returned NULL.");
+                            SporkLog(@"luau_load failed. Status: %d", status);
                         }
-                        in_hook_exec = 0;
                     } else {
-                        in_hook_exec = 0;
-                        SporkLog(@"HOOK CRASH CAUGHT: Signal %d", sig);
+                        SporkLog(@"lua_newthread returned NULL.");
                     }
+                    in_hook_exec = 0;
                 } else {
-                    g_find_fail_count++;
-                    if (g_find_fail_count == 1 || g_find_fail_count % 60 == 0) {
-                        SporkLog(@"Found pointer, but not a thread (tt=%d). Retrying...", tt);
-                    }
+                    in_hook_exec = 0;
+                    SporkLog(@"HOOK CRASH CAUGHT: Signal %d", sig);
+                }
+            } else {
+                g_find_fail_count++;
+                if (g_find_fail_count == 1 || g_find_fail_count % 60 == 0) {
+                    SporkLog(@"Scanner could not find encrypted lua_State. Retrying...");
                 }
             }
         }
