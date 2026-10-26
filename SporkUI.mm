@@ -1,9 +1,11 @@
 #import "SporkUI.h"
 
-extern void ExecuteLuauSource(const char* source, size_t size);
+extern void ExecuteLuauBytecode(const char* bytecode, size_t size);
 extern bool InjectExecutor(void);
 extern bool g_is_injected;
+extern int g_execution_method; // NEW: Global to store the selected method
 
+// --- Custom Button for Squish Effect ---
 @interface SporkButton : UIButton
 @end
 @implementation SporkButton
@@ -42,6 +44,7 @@ extern bool g_is_injected;
 
 @property (nonatomic, strong) SporkButton *injectBtn;
 @property (nonatomic, strong) UILabel *statusLabel;
+@property (nonatomic, strong) UILabel *methodLabel;
 @end
 
 @implementation SporkViewController
@@ -50,6 +53,7 @@ extern bool g_is_injected;
     [super viewDidLoad];
     self.view.backgroundColor = [UIColor clearColor];
     self.tabCounter = 1;
+    g_execution_method = 1; // Default to Method 1
     [self setupMainContainer];
     [self setupTopBar];
     [self setupSidebar];
@@ -88,7 +92,7 @@ extern bool g_is_injected;
 
     NSLayoutConstraint *widthConstraint = [self.mainContainer.widthAnchor constraintEqualToConstant:650];
     widthConstraint.priority = UILayoutPriorityDefaultHigh;
-    NSLayoutConstraint *heightConstraint = [self.mainContainer.heightAnchor constraintEqualToConstant:400];
+    NSLayoutConstraint *heightConstraint = [self.mainContainer.heightAnchor constraintEqualToConstant:450];
     heightConstraint.priority = UILayoutPriorityDefaultHigh;
 
     [NSLayoutConstraint activateConstraints:@[
@@ -122,23 +126,6 @@ extern bool g_is_injected;
     title.font = [UIFont boldSystemFontOfSize:16];
     [self.topBar addSubview:title];
 
-    UILabel *proBadge = [[UILabel alloc] init];
-    proBadge.translatesAutoresizingMaskIntoConstraints = NO;
-    proBadge.text = @" PRO ";
-    proBadge.textColor = [UIColor whiteColor];
-    proBadge.font = [UIFont boldSystemFontOfSize:10];
-    proBadge.backgroundColor = [UIColor colorWithRed:0.0 green:0.5 blue:1.0 alpha:1.0];
-    proBadge.layer.cornerRadius = 4;
-    proBadge.clipsToBounds = YES;
-    [self.topBar addSubview:proBadge];
-
-    UILabel *execText = [[UILabel alloc] init];
-    execText.translatesAutoresizingMaskIntoConstraints = NO;
-    execText.text = @"Executor & Scripts Handler";
-    execText.textColor = [UIColor lightGrayColor];
-    execText.font = [UIFont systemFontOfSize:10];
-    [self.topBar addSubview:execText];
-
     SporkButton *closeBtn = [SporkButton buttonWithType:UIButtonTypeSystem];
     closeBtn.translatesAutoresizingMaskIntoConstraints = NO;
     [closeBtn setImage:[UIImage systemImageNamed:@"xmark.circle.fill"] forState:UIControlStateNormal];
@@ -157,11 +144,6 @@ extern bool g_is_injected;
         [icon.heightAnchor constraintEqualToConstant:20],
         [title.leadingAnchor constraintEqualToAnchor:icon.trailingAnchor constant:8],
         [title.centerYAnchor constraintEqualToAnchor:self.topBar.centerYAnchor],
-        [proBadge.leadingAnchor constraintEqualToAnchor:title.trailingAnchor constant:8],
-        [proBadge.centerYAnchor constraintEqualToAnchor:self.topBar.centerYAnchor],
-        [proBadge.heightAnchor constraintEqualToConstant:16],
-        [execText.leadingAnchor constraintEqualToAnchor:proBadge.trailingAnchor constant:15],
-        [execText.centerYAnchor constraintEqualToAnchor:self.topBar.centerYAnchor],
         [closeBtn.trailingAnchor constraintEqualToAnchor:self.topBar.trailingAnchor constant:-15],
         [closeBtn.centerYAnchor constraintEqualToAnchor:self.topBar.centerYAnchor],
         [closeBtn.widthAnchor constraintEqualToConstant:24],
@@ -327,7 +309,7 @@ extern bool g_is_injected;
     
     UILabel *title = [[UILabel alloc] init];
     title.translatesAutoresizingMaskIntoConstraints = NO;
-    title.text = @"Executor Status";
+    title.text = @"Executor Status & Diagnostics";
     title.textColor = [UIColor whiteColor];
     title.font = [UIFont boldSystemFontOfSize:16];
     [self.homeTabView addSubview:title];
@@ -349,6 +331,31 @@ extern bool g_is_injected;
     [self.injectBtn addTarget:self action:@selector(injectExecutorAction) forControlEvents:UIControlEventTouchUpInside];
     [self.homeTabView addSubview:self.injectBtn];
 
+    // --- NEW: Method Selector ---
+    self.methodLabel = [[UILabel alloc] init];
+    self.methodLabel.translatesAutoresizingMaskIntoConstraints = NO;
+    self.methodLabel.text = @"Current Test Method: 1 (Direct)";
+    self.methodLabel.textColor = [UIColor yellowColor];
+    self.methodLabel.font = [UIFont systemFontOfSize:12];
+    [self.homeTabView addSubview:self.methodLabel];
+
+    UIStackView *methodStack = [[UIStackView alloc] init];
+    methodStack.translatesAutoresizingMaskIntoConstraints = NO;
+    methodStack.axis = UILayoutConstraintAxisHorizontal;
+    methodStack.spacing = 5;
+    methodStack.distribution = UIStackViewDistributionFillEqually;
+    [self.homeTabView addSubview:methodStack];
+
+    for (int i = 1; i <= 4; i++) {
+        SporkButton *btn = [SporkButton buttonWithType:UIButtonTypeSystem];
+        [btn setTitle:[NSString stringWithFormat:@"M%d", i] forState:UIControlStateNormal];
+        [btn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+        btn.backgroundColor = [UIColor darkGrayColor];
+        btn.tag = i;
+        [btn addTarget:self action:@selector(selectMethod:) forControlEvents:UIControlEventTouchUpInside];
+        [methodStack addArrangedSubview:btn];
+    }
+
     [NSLayoutConstraint activateConstraints:@[
         [self.homeTabView.topAnchor constraintEqualToAnchor:self.contentContainer.topAnchor constant:15],
         [self.homeTabView.leadingAnchor constraintEqualToAnchor:self.contentContainer.leadingAnchor constant:15],
@@ -358,11 +365,23 @@ extern bool g_is_injected;
         [title.leadingAnchor constraintEqualToAnchor:self.homeTabView.leadingAnchor constant:10],
         [self.statusLabel.topAnchor constraintEqualToAnchor:title.bottomAnchor constant:8],
         [self.statusLabel.leadingAnchor constraintEqualToAnchor:self.homeTabView.leadingAnchor constant:10],
-        [self.injectBtn.topAnchor constraintEqualToAnchor:self.statusLabel.bottomAnchor constant:20],
+        [self.injectBtn.topAnchor constraintEqualToAnchor:self.statusLabel.bottomAnchor constant:15],
         [self.injectBtn.leadingAnchor constraintEqualToAnchor:self.homeTabView.leadingAnchor constant:10],
         [self.injectBtn.trailingAnchor constraintEqualToAnchor:self.homeTabView.trailingAnchor constant:-10],
-        [self.injectBtn.heightAnchor constraintEqualToConstant:44]
+        [self.injectBtn.heightAnchor constraintEqualToConstant:44],
+        
+        [self.methodLabel.topAnchor constraintEqualToAnchor:self.injectBtn.bottomAnchor constant:20],
+        [self.methodLabel.leadingAnchor constraintEqualToAnchor:self.homeTabView.leadingAnchor constant:10],
+        [methodStack.topAnchor constraintEqualToAnchor:self.methodLabel.bottomAnchor constant:5],
+        [methodStack.leadingAnchor constraintEqualToAnchor:self.homeTabView.leadingAnchor constant:10],
+        [methodStack.trailingAnchor constraintEqualToAnchor:self.homeTabView.trailingAnchor constant:-10],
+        [methodStack.heightAnchor constraintEqualToConstant:30]
     ]];
+}
+
+- (void)selectMethod:(SporkButton *)sender {
+    g_execution_method = (int)sender.tag;
+    self.methodLabel.text = [NSString stringWithFormat:@"Current Test Method: %d", g_execution_method];
 }
 
 - (void)setupHacksTab {
@@ -505,32 +524,19 @@ extern bool g_is_injected;
 }
 
 - (void)executeInfiniteYield {
-    if (!g_is_injected) {
-        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Error" message:@"Please go to the Home tab and Inject first!" preferredStyle:UIAlertControllerStyleAlert];
-        [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
-        [self presentViewController:alert animated:YES completion:nil];
-        return;
-    }
-
+    if (!g_is_injected) return;
     const char* iy_source = "print('Infinite Yield Loaded!')";
-    ExecuteLuauSource(iy_source, strlen(iy_source));
-    
+    ExecuteLuauBytecode(iy_source, strlen(iy_source));
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Spork" message:@"Infinite Yield script queued!" preferredStyle:UIAlertControllerStyleAlert];
     [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
     [self presentViewController:alert animated:YES completion:nil];
 }
 
 - (void)executeScriptAction {
-    if (!g_is_injected) {
-        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Error" message:@"Please go to the Home tab and Inject first!" preferredStyle:UIAlertControllerStyleAlert];
-        [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
-        [self presentViewController:alert animated:YES completion:nil];
-        return;
-    }
-    
+    if (!g_is_injected) return;
     NSString *sourceCode = self.scriptEditor.text;
     const char *cString = [sourceCode UTF8String];
-    ExecuteLuauSource(cString, strlen(cString));
+    ExecuteLuauBytecode(cString, strlen(cString));
 }
 
 - (void)copyAction { if (self.scriptEditor.text.length > 0) [UIPasteboard generalPasteboard].string = self.scriptEditor.text; }
