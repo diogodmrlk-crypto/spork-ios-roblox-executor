@@ -17,6 +17,7 @@
 #define OFFSET_LUA_PCALL          0x4490fec
 #define OFFSET_LUA_GETTOP         0x448e048
 #define OFFSET_LUA_SETTOP         0x448e05c
+#define OFFSET_LUA_PUSHVALUE      0x448e428
 
 // --- Pass-Through Window ---
 @interface PassThroughWindow : UIWindow
@@ -46,6 +47,7 @@ typedef int (*lua_pcall_t)(void* L, int nargs, int nresults, int errfunc);
 typedef int (*luau_load_t)(void* L, const char* chunkname, const char* data, size_t size, int env);
 typedef int (*lua_gettop_t)(void* L);
 typedef void (*lua_settop_t)(void* L, int idx);
+typedef void (*lua_pushvalue_t)(void* L, int idx);
 
 bool g_is_injected = false;
 static NSMutableArray<NSString *> *g_scriptQueue = nil;
@@ -106,6 +108,7 @@ uintptr_t get_robloxlib_base(void) {
     return 0;
 }
 
+// Strict validation to prevent false positives
 void* FindLuaState(void* base_ptr) {
     if (!base_ptr) return NULL;
     uintptr_t base = STRIP_PAC(base_ptr);
@@ -126,9 +129,25 @@ void* FindLuaState(void* base_ptr) {
             if (stripped_global > 0x100000000 && stripped_global < 0x400000000) {
                 void* mainthread = NULL;
                 if (safe_read((void*)(stripped_global + 0x1a0), &mainthread, 8)) {
-                    uintptr_t stripped_mt = STRIP_PAC(mainthread);
-                    if (stripped_mt > 0x100000000 && stripped_mt < 0x400000000) {
-                        return mainthread; 
+                    uintptr_t mt = STRIP_PAC(mainthread);
+                    if (mt > 0x100000000 && mt < 0x400000000) {
+                        // STRICT VALIDATION: Ensure stack pointers are valid
+                        uintptr_t stack = 0, top = 0, stack_last = 0, base_ci = 0;
+                        if (!safe_read((void*)(mt + 0x60), &stack, 8)) continue;
+                        if (!safe_read((void*)(mt + 0x68), &stack_last, 8)) continue;
+                        if (!safe_read((void*)(mt + 0x70), &top, 8)) continue;
+                        if (!safe_read((void*)(mt + 0x18), &base_ci, 8)) continue;
+
+                        stack = STRIP_PAC(stack);
+                        top = STRIP_PAC(top);
+                        stack_last = STRIP_PAC(stack_last);
+                        base_ci = STRIP_PAC(base_ci);
+
+                        if (stack < 0x100000000 || stack > 0x400000000) continue;
+                        if (top < stack || top > stack_last) continue;
+                        if (base_ci < 0x100000000) continue;
+
+                        return mainthread;
                     }
                 }
             }
@@ -157,38 +176,36 @@ void my_job_step(void* job) {
                 lua_pcall_t lua_pcall = (lua_pcall_t)(base + OFFSET_LUA_PCALL);
                 lua_gettop_t lua_gettop = (lua_gettop_t)(base + OFFSET_LUA_GETTOP);
                 lua_settop_t lua_settop = (lua_settop_t)(base + OFFSET_LUA_SETTOP);
+                lua_pushvalue_t lua_pushvalue = (lua_pushvalue_t)(base + OFFSET_LUA_PUSHVALUE);
                 
-                SporkLog(@"Hook fired! live_L: %p", live_L);
-                SporkLog(@"Function addresses: load=%p, pcall=%p", luau_load, lua_pcall);
+                SporkLog(@"Found valid L: %p. Executing...", live_L);
                 
                 in_hook_exec = 1;
                 int sig = sigsetjmp(hook_jump_buffer, 1);
                 
                 if (sig == 0) {
-                    SporkLog(@"Step 1: Calling lua_gettop...");
                     int top = lua_gettop(live_L);
-                    SporkLog(@"Step 1 complete. Top: %d", top);
+                    
+                    // Push the globals table and pass its index as the environment
+                    lua_pushvalue(live_L, -10002); // LUA_GLOBALSINDEX
+                    int env_idx = lua_gettop(live_L);
                     
                     const char *source = [script UTF8String];
-                    
-                    SporkLog(@"Step 2: Calling luau_load...");
-                    int status = luau_load(live_L, "SporkScript", source, strlen(source), 0);
-                    SporkLog(@"Step 2 complete. Status: %d", status);
-                    
+                    int status = luau_load(live_L, "SporkScript", source, strlen(source), env_idx);
                     if (status == 0) {
-                        SporkLog(@"Step 3: Calling lua_pcall...");
                         lua_pcall(live_L, 0, 0, 0);
-                        SporkLog(@"Step 3 complete.");
+                        SporkLog(@"Success: LocalScript executed!");
+                    } else {
+                        SporkLog(@"Error: Compile/Load Failed with status %d", status);
                     }
                     
-                    SporkLog(@"Step 4: Calling lua_settop...");
+                    // Restore the stack to prevent corruption
                     lua_settop(live_L, top);
-                    SporkLog(@"Step 4 complete. Execution finished successfully!");
                     
                     in_hook_exec = 0;
                 } else {
                     in_hook_exec = 0;
-                    SporkLog(@"HOOK CRASH CAUGHT: Signal %d at the step above.", sig);
+                    SporkLog(@"HOOK CRASH CAUGHT: Signal %d. The app is safe.", sig);
                 }
             } else {
                 SporkLog(@"Error: Could not find a live thread.");
