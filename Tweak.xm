@@ -2,7 +2,7 @@
 #import <mach-o/dyld.h>
 #import <string.h>
 #import <mach/mach.h>
-#import <mach/vm_map.h> // Fixed include for Xcode 26
+#import <mach/vm_map.h>
 #import "SporkUI.h"
 
 // --- Offsets for Roblox 2.744.0.1077 ---
@@ -54,23 +54,18 @@ void SporkLog(NSString *format, ...) {
     va_end(args);
     
     if (!g_logs) g_logs = [NSMutableArray array];
-    
-    // Timestamp
     NSDateFormatter *formatter = [[NSDateFormatter alloc] init];
     [formatter setDateFormat:@"HH:mm:ss"];
     NSString *timeStr = [formatter stringFromDate:[NSDate date]];
-    
     NSString *logLine = [NSString stringWithFormat:@"[%@] %@", timeStr, msg];
     [g_logs addObject:logLine];
     NSLog(@"[Spork] %@", msg);
     
-    // Notify UI to update
     dispatch_async(dispatch_get_main_queue(), ^{
         [[NSNotificationCenter defaultCenter] postNotificationName:@"SporkLogUpdated" object:nil];
     });
 }
 
-// Safely read memory (Fixed for Xcode 26)
 bool safe_read(void* address, void* buffer, size_t size) {
     vm_size_t out_size;
     kern_return_t kr = vm_read_overwrite(mach_task_self(), (vm_address_t)address, (vm_size_t)size, (vm_address_t)buffer, &out_size);
@@ -79,7 +74,7 @@ bool safe_read(void* address, void* buffer, size_t size) {
 
 void* FindLuaState(void* base_ptr) {
     if (!base_ptr) return NULL;
-    for (int i = 0; i < 0x10000; i += 8) {
+    for (int i = 0; i < 0x2000; i += 8) {
         void* ptr = NULL;
         if (!safe_read((char*)base_ptr + i, &ptr, 8)) continue;
         
@@ -117,55 +112,42 @@ bool InjectExecutor(void) {
     safe_read((char*)task_scheduler + OFFSET_TS_JOBS_START, &start, 8);
     safe_read((char*)task_scheduler + OFFSET_TS_JOBS_END, &end, 8);
     
+    SporkLog(@"Job list Start: %p, End: %p", (void*)start, (void*)end);
+
     if (!start || !end || end <= start) {
-        SporkLog(@"Error: Invalid job list pointers.");
+        SporkLog(@"Error: Invalid job list pointers or empty list.");
         return false;
     }
 
-    void* job = NULL;
-    void* script_context = NULL;
-    
+    int jobCount = 0;
     for (uintptr_t ptr = start; ptr < end; ptr += 0x10) {
         void* j = NULL;
         if (!safe_read((void*)ptr, &j, 8) || !j) continue;
         
-        uintptr_t str_ptr = 0;
-        if (!safe_read((char*)j + OFFSET_JOB_NAME, &str_ptr, 8) || str_ptr < 0x100000000) continue;
+        jobCount++;
         
-        char name[64] = {0};
-        if (safe_read((void*)str_ptr, name, 63)) {
-            if (strcmp(name, "WaitingHybridScriptsJob") == 0) {
-                job = j;
-                safe_read((char*)j + OFFSET_JOB_SCRIPT_CTX, &script_context, 8);
-                break;
+        // Instead of checking the name, check if it has a ScriptContext at 0x1b0
+        void* script_context = NULL;
+        if (safe_read((char*)j + OFFSET_JOB_SCRIPT_CTX, &script_context, 8) && script_context) {
+            SporkLog(@"Found Job with ScriptContext at index %d", jobCount);
+            
+            g_L = FindLuaState(script_context);
+            if (g_L) {
+                SporkLog(@"Success: Found lua_State in ScriptContext: %p", g_L);
+                g_is_injected = true;
+                return true;
+            }
+            
+            g_L = FindLuaState(j);
+            if (g_L) {
+                SporkLog(@"Success: Found lua_State in Job: %p", g_L);
+                g_is_injected = true;
+                return true;
             }
         }
     }
     
-    if (!job) {
-        SporkLog(@"Error: WaitingHybridScriptsJob not found.");
-        return false;
-    }
-    SporkLog(@"Found Job: %p", job);
-    if (script_context) SporkLog(@"Found ScriptContext: %p", script_context);
-    
-    if (script_context) {
-        g_L = FindLuaState(script_context);
-        if (g_L) {
-            SporkLog(@"Success: Found lua_State in ScriptContext: %p", g_L);
-            g_is_injected = true;
-            return true;
-        }
-    }
-    
-    g_L = FindLuaState(job);
-    if (g_L) {
-        SporkLog(@"Success: Found lua_State in Job: %p", g_L);
-        g_is_injected = true;
-        return true;
-    }
-
-    SporkLog(@"Error: Could not find lua_State in Job or ScriptContext.");
+    SporkLog(@"Scanned %d jobs, but failed to find lua_State.", jobCount);
     return false;
 }
 
