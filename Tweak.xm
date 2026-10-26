@@ -5,11 +5,10 @@
 #import <mach/vm_map.h>
 #import "SporkUI.h"
 
-// --- Offsets for Roblox 2.744.0.1077 ---
+// --- Offsets for Roblox 2.744.0.1077 (Relative to RobloxLib) ---
 #define OFFSET_TASKSCHEDULER    0x6a6d7c0
 #define OFFSET_TS_JOBS_START    0xd0
 #define OFFSET_TS_JOBS_END      0xd8
-#define OFFSET_JOB_NAME         0x18
 #define OFFSET_JOB_SCRIPT_CTX   0x1b0
 #define OFFSET_LUAU_LOAD        0x44bc110
 #define OFFSET_LUA_PCALL        0x4490fec
@@ -66,27 +65,49 @@ void SporkLog(NSString *format, ...) {
     });
 }
 
+// Strip PAC (Pointer Authentication Code) for arm64e
+#define STRIP_PAC(ptr) ((uintptr_t)(ptr) & 0x0000000FFFFFFFFF)
+
+// Safely read memory
 bool safe_read(void* address, void* buffer, size_t size) {
+    uintptr_t addr = STRIP_PAC(address);
+    if (addr < 0x100000000 || addr > 0x8000000000) return false;
+    
     vm_size_t out_size;
-    kern_return_t kr = vm_read_overwrite(mach_task_self(), (vm_address_t)address, (vm_size_t)size, (vm_address_t)buffer, &out_size);
+    kern_return_t kr = vm_read_overwrite(mach_task_self(), (vm_address_t)addr, (vm_size_t)size, (vm_address_t)buffer, &out_size);
     return (kr == KERN_SUCCESS && out_size == size);
+}
+
+// Find the base address of RobloxLib
+uintptr_t get_robloxlib_base(void) {
+    uint32_t count = _dyld_image_count();
+    for (uint32_t i = 0; i < count; i++) {
+        const char *name = _dyld_get_image_name(i);
+        if (name && strstr(name, "RobloxLib")) {
+            return (uintptr_t)_dyld_get_image_header(i);
+        }
+    }
+    return 0;
 }
 
 void* FindLuaState(void* base_ptr) {
     if (!base_ptr) return NULL;
+    uintptr_t base = STRIP_PAC(base_ptr);
+    
     for (int i = 0; i < 0x2000; i += 8) {
         void* ptr = NULL;
-        if (!safe_read((char*)base_ptr + i, &ptr, 8)) continue;
+        if (!safe_read((void*)(base + i), &ptr, 8)) continue;
         
-        if ((uintptr_t)ptr > 0x100000000 && (uintptr_t)ptr < 0x8000000000) {
+        uintptr_t stripped_ptr = STRIP_PAC(ptr);
+        if (stripped_ptr > 0x100000000 && stripped_ptr < 0x8000000000) {
             uint8_t tt = 0;
-            if (!safe_read((char*)ptr + 0x2, &tt, 1)) continue;
+            if (!safe_read((void*)(stripped_ptr + 0x2), &tt, 1)) continue;
             
             if (tt == 9) { 
                 void* global_ptr = NULL;
-                if (safe_read((char*)ptr + 0x78, &global_ptr, 8)) {
-                    if ((uintptr_t)global_ptr > 0x100000000) {
-                        return ptr;
+                if (safe_read((void*)(stripped_ptr + 0x78), &global_ptr, 8)) {
+                    if (STRIP_PAC(global_ptr) > 0x100000000) {
+                        return (void*)stripped_ptr;
                     }
                 }
             }
@@ -99,18 +120,27 @@ bool InjectExecutor(void) {
     if (g_logs) [g_logs removeAllObjects];
     SporkLog(@"Starting Injection...");
     
-    uintptr_t base = (uintptr_t)_dyld_get_image_header(0);
+    uintptr_t base = get_robloxlib_base();
+    if (!base) {
+        SporkLog(@"Error: Failed to find RobloxLib base.");
+        return false;
+    }
+    SporkLog(@"RobloxLib Base: 0x%lx", (unsigned long)base);
     
     void* task_scheduler = NULL;
     if (!safe_read((void*)(base + OFFSET_TASKSCHEDULER), &task_scheduler, 8) || !task_scheduler) {
         SporkLog(@"Error: Failed to find TaskScheduler.");
         return false;
     }
+    task_scheduler = (void*)STRIP_PAC(task_scheduler);
     SporkLog(@"Found TaskScheduler: %p", task_scheduler);
     
     uintptr_t start = 0, end = 0;
     safe_read((char*)task_scheduler + OFFSET_TS_JOBS_START, &start, 8);
     safe_read((char*)task_scheduler + OFFSET_TS_JOBS_END, &end, 8);
+    
+    start = STRIP_PAC(start);
+    end = STRIP_PAC(end);
     
     SporkLog(@"Job list Start: %p, End: %p", (void*)start, (void*)end);
 
@@ -124,12 +154,12 @@ bool InjectExecutor(void) {
         void* j = NULL;
         if (!safe_read((void*)ptr, &j, 8) || !j) continue;
         
+        uintptr_t stripped_j = STRIP_PAC(j);
         jobCount++;
         
-        // Instead of checking the name, check if it has a ScriptContext at 0x1b0
         void* script_context = NULL;
-        if (safe_read((char*)j + OFFSET_JOB_SCRIPT_CTX, &script_context, 8) && script_context) {
-            SporkLog(@"Found Job with ScriptContext at index %d", jobCount);
+        if (safe_read((char*)stripped_j + OFFSET_JOB_SCRIPT_CTX, &script_context, 8) && script_context) {
+            script_context = (void*)STRIP_PAC(script_context);
             
             g_L = FindLuaState(script_context);
             if (g_L) {
@@ -138,7 +168,7 @@ bool InjectExecutor(void) {
                 return true;
             }
             
-            g_L = FindLuaState(j);
+            g_L = FindLuaState((void*)stripped_j);
             if (g_L) {
                 SporkLog(@"Success: Found lua_State in Job: %p", g_L);
                 g_is_injected = true;
@@ -157,9 +187,9 @@ void ExecuteLuauBytecode(const char* bytecode, size_t size) {
         return;
     }
 
-    uintptr_t base = (uintptr_t)_dyld_get_image_header(0);
-    luau_load_t luau_load = (luau_load_t)(base + OFFSET_LUAU_LOAD);
-    lua_pcall_t lua_pcall = (lua_pcall_t)(base + OFFSET_LUA_PCALL);
+    uintptr_t base = get_robloxlib_base();
+    luau_load_t luau_load = (luau_load_t)STRIP_PAC(base + OFFSET_LUAU_LOAD);
+    lua_pcall_t lua_pcall = (lua_pcall_t)STRIP_PAC(base + OFFSET_LUA_PCALL);
 
     SporkLog(@"Executing bytecode...");
     int status = luau_load(g_L, "SporkScript", bytecode, size, 0);
