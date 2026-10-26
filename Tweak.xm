@@ -4,6 +4,8 @@
 #import <mach/mach.h>
 #import <mach/vm_map.h>
 #import <stdlib.h>
+#import <signal.h>
+#import <setjmp.h>
 #import "SporkUI.h"
 
 // --- Offsets for Roblox 2.744.0.1077 (Relative to RobloxLib) ---
@@ -14,6 +16,7 @@
 #define OFFSET_LUAU_LOAD          0x44bc110
 #define OFFSET_LUA_PCALL          0x4490fec
 #define OFFSET_LUA_NEWTHREAD      0x448df3c
+#define OFFSET_LUAL_SANDBOXTHREAD 0x1a12ad4 // Sandbox offset to give the thread an environment
 
 // --- Pass-Through Window ---
 @interface PassThroughWindow : UIWindow
@@ -42,12 +45,23 @@ static PassThroughWindow *overlayWindow = nil;
 typedef int (*lua_pcall_t)(void* L, int nargs, int nresults, int errfunc);
 typedef int (*luau_load_t)(void* L, const char* chunkname, const char* data, size_t size, int env);
 typedef void* (*lua_newthread_t)(void* L);
+typedef void (*luaL_sandboxthread_t)(void* L);
 
 static void* g_L = NULL;
 bool g_is_injected = false;
 static NSMutableArray<NSString *> *g_scriptQueue = nil;
 
 static void* orig_job_step = NULL;
+
+// --- Local Crash Handler for the Hook ---
+static sigjmp_buf hook_jump_buffer;
+static volatile sig_atomic_t in_hook_exec = 0;
+
+void hook_signal_handler(int sig) {
+    if (in_hook_exec) {
+        siglongjmp(hook_jump_buffer, sig);
+    }
+}
 
 // --- Logging System ---
 NSMutableArray<NSString *> *g_logs = nil;
@@ -136,22 +150,35 @@ void my_job_step(void* job) {
         luau_load_t luau_load = (luau_load_t)(base + OFFSET_LUAU_LOAD);
         lua_pcall_t lua_pcall = (lua_pcall_t)(base + OFFSET_LUA_PCALL);
         lua_newthread_t lua_newthread = (lua_newthread_t)(base + OFFSET_LUA_NEWTHREAD);
+        luaL_sandboxthread_t luaL_sandboxthread = (luaL_sandboxthread_t)(base + OFFSET_LUAL_SANDBOXTHREAD);
         
         SporkLog(@"Job::step hooked! Creating coroutine...");
         
-        // Create a new thread inside the hook to prevent stack corruption
-        void* new_L = lua_newthread(g_L);
-        if (new_L) {
-            const char *source = [script UTF8String];
-            int status = luau_load(new_L, "SporkScript", source, strlen(source), 0);
-            if (status == 0) {
-                lua_pcall(new_L, 0, 0, 0);
-                SporkLog(@"Success: Script executed!");
+        in_hook_exec = 1;
+        int sig = sigsetjmp(hook_jump_buffer, 1);
+        
+        if (sig == 0) {
+            // Create new thread
+            void* new_L = lua_newthread(g_L);
+            if (new_L) {
+                // Sandbox the new thread to give it game/workspace/print access
+                luaL_sandboxthread(new_L);
+
+                const char *source = [script UTF8String];
+                int status = luau_load(new_L, "SporkScript", source, strlen(source), 0);
+                if (status == 0) {
+                    lua_pcall(new_L, 0, 0, 0);
+                    SporkLog(@"Success: Script executed!");
+                } else {
+                    SporkLog(@"Error: Compile/Load Failed with status %d", status);
+                }
             } else {
-                SporkLog(@"Error: Compile/Load Failed with status %d", status);
+                SporkLog(@"Error: Failed to create new thread.");
             }
+            in_hook_exec = 0;
         } else {
-            SporkLog(@"Error: Failed to create new thread.");
+            in_hook_exec = 0;
+            SporkLog(@"HOOK CRASH CAUGHT: Signal %d. The app is safe.", sig);
         }
     }
     
@@ -164,6 +191,10 @@ void my_job_step(void* job) {
 bool InjectExecutor(void) {
     if (g_logs) [g_logs removeAllObjects];
     SporkLog(@"Starting Injection...");
+    
+    // Register the hook's local signal handler
+    signal(SIGSEGV, hook_signal_handler);
+    signal(SIGBUS, hook_signal_handler);
     
     uintptr_t base = get_robloxlib_base();
     if (!base) {
