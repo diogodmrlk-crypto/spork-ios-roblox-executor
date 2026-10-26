@@ -9,6 +9,8 @@
 #define OFFSET_TS_JOBS_END      0xd8
 #define OFFSET_JOB_NAME         0x18
 #define OFFSET_JOB_SCRIPT_CTX   0x1b0
+#define OFFSET_GET_GLOBAL_STATE 0x19ce768
+#define OFFSET_GS_MAINTHREAD    0x1a0
 #define OFFSET_LUAU_LOAD        0x44bc110
 #define OFFSET_LUA_PCALL        0x4490fec
 
@@ -38,24 +40,19 @@ static PassThroughWindow *overlayWindow = nil;
 // --- Executor Logic ---
 typedef int (*lua_pcall_t)(void* L, int nargs, int nresults, int errfunc);
 typedef int (*luau_load_t)(void* L, const char* chunkname, const char* data, size_t size, int env);
+typedef void* (*get_global_state_t)(void*);
 
 static void* g_L = NULL;
 bool g_is_injected = false;
 
-// Memory scanner to find lua_State inside ScriptContext safely
-void* FindLuaState(void* script_context) {
-    if (!script_context) return NULL;
-    
-    // Scan the first 0x2000 bytes of ScriptContext for a lua_State pointer
+// Memory scanner to find lua_State by looking for tt == 8 (LUA_TTHREAD)
+void* FindLuaState(void* base_ptr) {
+    if (!base_ptr) return NULL;
     for (int i = 0; i < 0x2000; i += 8) {
-        void* ptr = *(void**)((char*)script_context + i);
-        
-        // Valid user-space pointer check (Cast to uintptr_t to fix compile error)
+        void* ptr = *(void**)((char*)base_ptr + i);
         if ((uintptr_t)ptr > 0x100000000 && (uintptr_t)ptr < 0x8000000000) {
-            uint8_t tt = *(uint8_t*)((char*)ptr + 0x2); // lua_State::tt is at 0x2
-            void* global = *(void**)((char*)ptr + 0x78); // lua_State::global is at 0x78
-            
-            // LUA_TTHREAD is 8. If this matches, we found the lua_State!
+            uint8_t tt = *(uint8_t*)((char*)ptr + 0x2); // lua_State::tt
+            void* global = *(void**)((char*)ptr + 0x78); // lua_State::global
             if (tt == 8 && (uintptr_t)global > 0x100000000) {
                 return ptr;
             }
@@ -65,7 +62,6 @@ void* FindLuaState(void* script_context) {
 }
 
 bool InjectExecutor(void) {
-    g_is_injected = true;
     uintptr_t base = (uintptr_t)_dyld_get_image_header(0);
     
     // 1. Find TaskScheduler
@@ -78,35 +74,58 @@ bool InjectExecutor(void) {
     // 2. Iterate through jobs to find WaitingHybridScriptsJob
     uintptr_t start = *(uintptr_t*)((char*)task_scheduler + OFFSET_TS_JOBS_START);
     uintptr_t end = *(uintptr_t*)((char*)task_scheduler + OFFSET_TS_JOBS_END);
+    void* job = NULL;
     void* script_context = NULL;
     
     for (uintptr_t ptr = start; ptr < end; ptr += 0x10) {
-        void* job = *(void**)(ptr);
-        if (!job) continue;
+        void* j = *(void**)(ptr);
+        if (!j) continue;
         
-        uintptr_t str_ptr = *(uintptr_t*)((char*)job + OFFSET_JOB_NAME);
+        uintptr_t str_ptr = *(uintptr_t*)((char*)j + OFFSET_JOB_NAME);
         if (str_ptr > 0x100000000) {
             const char* name = (const char*)str_ptr;
             if (strcmp(name, "WaitingHybridScriptsJob") == 0) {
-                script_context = *(void**)((char*)job + OFFSET_JOB_SCRIPT_CTX);
+                job = j;
+                script_context = *(void**)((char*)j + OFFSET_JOB_SCRIPT_CTX);
                 break;
             }
         }
     }
     
-    if (!script_context) {
+    if (!job) {
         NSLog(@"[Spork] Failed to find WaitingHybridScriptsJob.");
         return false;
     }
     
-    // 3. Safely scan for lua_State
-    g_L = FindLuaState(script_context);
-    
+    // Strategy 1: Scan the Job for lua_State
+    g_L = FindLuaState(job);
     if (g_L) {
-        NSLog(@"[Spork] Successfully Injected! lua_State: %p", g_L);
+        NSLog(@"[Spork] Found lua_State via Job scan! %p", g_L);
+        g_is_injected = true;
         return true;
     }
     
+    // Strategy 2: Scan the ScriptContext for lua_State
+    g_L = FindLuaState(script_context);
+    if (g_L) {
+        NSLog(@"[Spork] Found lua_State via ScriptContext scan! %p", g_L);
+        g_is_injected = true;
+        return true;
+    }
+    
+    // Strategy 3: Try get_global_state(job)
+    get_global_state_t get_gs = (get_global_state_t)(base + OFFSET_GET_GLOBAL_STATE);
+    void* global_state = get_gs(job);
+    if (global_state && (uintptr_t)global_state > 0x100000000) {
+        void* mainthread = *(void**)((char*)global_state + OFFSET_GS_MAINTHREAD);
+        if (mainthread && (uintptr_t)mainthread > 0x100000000) {
+            g_L = mainthread;
+            NSLog(@"[Spork] Found lua_State via get_global_state(job)! %p", g_L);
+            g_is_injected = true;
+            return true;
+        }
+    }
+
     NSLog(@"[Spork] Injection failed: Could not find lua_State.");
     return false;
 }
