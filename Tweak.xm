@@ -14,16 +14,15 @@
 #define OFFSET_TS_JOBS_END        0xd8
 #define OFFSET_JOB_SCRIPT_CTX     0x1b0
 
+// The function from your dump to get global_State from ScriptContext
+#define OFFSET_GET_GLOBAL_STATE   0x19ce768
+#define OFFSET_MAINTHREAD         0x1a0
+
 // Lua functions
 #define OFFSET_LUAU_LOAD          0x44bc110
 #define OFFSET_LUA_PCALL          0x4490fec
 #define OFFSET_LUA_NEWTHREAD      0x448df3c
 #define OFFSET_LUAL_SANDBOXTHREAD 0x1a12ad4
-
-// Validation Offsets
-#define OFFSET_GLOBAL_STATE_MAINTHREAD 0x1a0
-#define OFFSET_LUA_STATE_GLOBAL        0x78
-#define OFFSET_LUA_STATE_TT            0x2
 
 // --- Pass-Through Window ---
 @interface PassThroughWindow : UIWindow
@@ -53,6 +52,7 @@ typedef int (*lua_pcall_t)(void* L, int nargs, int nresults, int errfunc);
 typedef int (*luau_load_t)(void* L, const char* chunkname, const char* data, size_t size, int env);
 typedef void* (*lua_newthread_t)(void* L);
 typedef void (*luaL_sandboxthread_t)(void* L);
+typedef void* (*get_global_state_t)(void* sc);
 
 bool g_is_injected = false;
 int g_execution_method = 1; 
@@ -61,8 +61,8 @@ static NSMutableArray<NSString *> *g_scriptQueue = nil;
 static const char* g_current_script_source = NULL;
 static size_t g_current_script_size = 0;
 
+static void* g_live_L = NULL; // Our saved lua_State pointer
 static void* orig_job_step = NULL;
-static int g_find_fail_count = 0;
 
 // --- Local Crash Handler for the Hook ---
 static sigjmp_buf hook_jump_buffer;
@@ -118,100 +118,46 @@ uintptr_t get_robloxlib_base(void) {
     return 0;
 }
 
-// --- XOR Decryption + Self-Validating Scanner ---
-void* find_main_thread_in_sc(void* script_context) {
-    uintptr_t ctx = (uintptr_t)script_context;
-    
-    // Scan up to 0x4000 bytes of ScriptContext
-    for (int i = 0; i < 0x4000; i += 8) {
-        uintptr_t ptr_addr = ctx + i;
-        uint32_t enc[2] = {0, 0};
-        if (!safe_read((void*)ptr_addr, enc, 8)) continue;
-        
-        uint32_t masked = (uint32_t)ptr_addr;
-        
-        // 1. XOR Decryption
-        uint32_t low = masked ^ enc[0];
-        uint32_t high = masked ^ enc[1];
-        uintptr_t L = ((uint64_t)high << 32) | low;
-        
-        if (L > 0x100000000 && L < 0x7FFFFFFFFFFF) {
-            // Test A: Is it a lua_State?
-            uint8_t tt = 0;
-            if (safe_read((void*)(L + OFFSET_LUA_STATE_TT), &tt, 1) && tt == 9) {
-                SporkLog(@"Found lua_State at SC+0x%X (XOR) -> %p", i, (void*)L);
-                return (void*)L;
-            }
-            
-            // Test B: Is it a global_State?
-            uintptr_t mt = 0;
-            if (safe_read((void*)(L + OFFSET_GLOBAL_STATE_MAINTHREAD), &mt, 8) && mt > 0x100000000 && mt < 0x7FFFFFFFFFFF) {
-                uintptr_t gs_back = 0;
-                if (safe_read((void*)(mt + OFFSET_LUA_STATE_GLOBAL), &gs_back, 8) && gs_back == L) {
-                    SporkLog(@"Found global_State at SC+0x%X (XOR) -> mainthread %p", i, (void*)mt);
-                    return (void*)mt;
-                }
-            }
-        }
-    }
-    return NULL;
-}
-
 // --- VTable Hook for Job::step ---
 void my_job_step(void* job) {
-    if (g_scriptQueue && g_scriptQueue.count > 0) {
+    if (g_scriptQueue && g_scriptQueue.count > 0 && g_live_L) {
         
         uintptr_t base = get_robloxlib_base();
-        void* script_context = NULL;
         
-        if (safe_read((char*)job + OFFSET_JOB_SCRIPT_CTX, &script_context, 8) && script_context) {
-            script_context = (void*)STRIP_PAC(script_context);
-            
-            void* live_L = find_main_thread_in_sc(script_context);
-            
-            if (live_L) {
-                g_find_fail_count = 0;
-                NSString *script = g_scriptQueue.firstObject;
-                [g_scriptQueue removeObjectAtIndex:0];
-                
-                g_current_script_source = [script UTF8String];
-                g_current_script_size = strlen(g_current_script_source);
-                
-                luau_load_t luau_load = (luau_load_t)(base + OFFSET_LUAU_LOAD);
-                lua_pcall_t lua_pcall = (lua_pcall_t)(base + OFFSET_LUA_PCALL);
-                lua_newthread_t lua_newthread = (lua_newthread_t)(base + OFFSET_LUA_NEWTHREAD);
-                luaL_sandboxthread_t luaL_sandboxthread = (luaL_sandboxthread_t)(base + OFFSET_LUAL_SANDBOXTHREAD);
-                
-                SporkLog(@"Hook fired! live_L: %p", live_L);
-                
-                in_hook_exec = 1;
-                int sig = sigsetjmp(hook_jump_buffer, 1);
-                
-                if (sig == 0) {
-                    void* new_L = lua_newthread(live_L);
-                    if (new_L) {
-                        luaL_sandboxthread(new_L);
-                        int status = luau_load(new_L, "SporkScript", g_current_script_source, g_current_script_size, 0);
-                        if (status == 0) {
-                            lua_pcall(new_L, 0, 0, 0);
-                            SporkLog(@"Executed successfully!");
-                        } else {
-                            SporkLog(@"luau_load failed. Status: %d", status);
-                        }
-                    } else {
-                        SporkLog(@"lua_newthread returned NULL.");
-                    }
-                    in_hook_exec = 0;
+        NSString *script = g_scriptQueue.firstObject;
+        [g_scriptQueue removeObjectAtIndex:0];
+        
+        g_current_script_source = [script UTF8String];
+        g_current_script_size = strlen(g_current_script_source);
+        
+        luau_load_t luau_load = (luau_load_t)(base + OFFSET_LUAU_LOAD);
+        lua_pcall_t lua_pcall = (lua_pcall_t)(base + OFFSET_LUA_PCALL);
+        lua_newthread_t lua_newthread = (lua_newthread_t)(base + OFFSET_LUA_NEWTHREAD);
+        luaL_sandboxthread_t luaL_sandboxthread = (luaL_sandboxthread_t)(base + OFFSET_LUAL_SANDBOXTHREAD);
+        
+        SporkLog(@"Hook fired! Using saved live_L: %p", g_live_L);
+        
+        in_hook_exec = 1;
+        int sig = sigsetjmp(hook_jump_buffer, 1);
+        
+        if (sig == 0) {
+            void* new_L = lua_newthread(g_live_L);
+            if (new_L) {
+                luaL_sandboxthread(new_L);
+                int status = luau_load(new_L, "SporkScript", g_current_script_source, g_current_script_size, 0);
+                if (status == 0) {
+                    lua_pcall(new_L, 0, 0, 0);
+                    SporkLog(@"Executed successfully!");
                 } else {
-                    in_hook_exec = 0;
-                    SporkLog(@"HOOK CRASH CAUGHT: Signal %d", sig);
+                    SporkLog(@"luau_load failed. Status: %d", status);
                 }
             } else {
-                g_find_fail_count++;
-                if (g_find_fail_count == 1 || g_find_fail_count % 60 == 0) {
-                    SporkLog(@"Scanner could not find lua_State. Retrying...");
-                }
+                SporkLog(@"lua_newthread returned NULL.");
             }
+            in_hook_exec = 0;
+        } else {
+            in_hook_exec = 0;
+            SporkLog(@"HOOK CRASH CAUGHT: Signal %d", sig);
         }
     }
     
@@ -253,6 +199,8 @@ bool InjectExecutor(void) {
     }
 
     void* target_job = NULL;
+    void* script_context = NULL;
+
     for (uintptr_t ptr = start; ptr < end; ptr += 0x10) {
         void* j = NULL;
         if (!safe_read((void*)ptr, &j, 8) || !j) continue;
@@ -262,13 +210,32 @@ bool InjectExecutor(void) {
         void* job_sc = NULL;
         if (safe_read((char*)stripped_j + OFFSET_JOB_SCRIPT_CTX, &job_sc, 8) && job_sc) {
             target_job = j;
+            script_context = job_sc;
             SporkLog(@"Success: Found Job with ScriptContext: %p", j);
             break;
         }
     }
     
-    if (!target_job) {
+    if (!target_job || !script_context) {
         SporkLog(@"Error: Could not find a valid Job.");
+        return false;
+    }
+
+    // --- Get lua_State directly using your dumped offset ---
+    // We do this HERE, outside of Job::step, to avoid deadlocking the engine!
+    get_global_state_t get_global_state = (get_global_state_t)(base + OFFSET_GET_GLOBAL_STATE);
+    void* global_state = get_global_state(script_context);
+    
+    if (global_state) {
+        safe_read((char*)global_state + OFFSET_MAINTHREAD, &g_live_L, 8);
+        if (g_live_L) {
+            SporkLog(@"Got live_L from global_State: %p", g_live_L);
+        } else {
+            SporkLog(@"Error: mainthread was NULL.");
+            return false;
+        }
+    } else {
+        SporkLog(@"Error: get_global_state returned NULL.");
         return false;
     }
 
