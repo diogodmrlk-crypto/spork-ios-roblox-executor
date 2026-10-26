@@ -12,7 +12,7 @@
 #define OFFSET_JOB_SCRIPT_CTX   0x1b0
 #define OFFSET_LUAU_LOAD        0x44bc110
 #define OFFSET_LUA_PCALL        0x4490fec
-#define OFFSET_LUA_SETTOP       0x448e05c
+#define OFFSET_LUA_NEWTHREAD    0x448df3c // Added newthread offset
 
 // --- Pass-Through Window ---
 @interface PassThroughWindow : UIWindow
@@ -40,7 +40,7 @@ static PassThroughWindow *overlayWindow = nil;
 // --- Executor Logic ---
 typedef int (*lua_pcall_t)(void* L, int nargs, int nresults, int errfunc);
 typedef int (*luau_load_t)(void* L, const char* chunkname, const char* data, size_t size, int env);
-typedef void (*lua_settop_t)(void* L, int idx);
+typedef void* (*lua_newthread_t)(void* L);
 
 static void* g_L = NULL;
 bool g_is_injected = false;
@@ -89,7 +89,6 @@ uintptr_t get_robloxlib_base(void) {
     return 0;
 }
 
-// Find ANY valid thread, then return its global state's mainthread
 void* FindLuaState(void* base_ptr) {
     if (!base_ptr) return NULL;
     uintptr_t base = STRIP_PAC(base_ptr);
@@ -109,11 +108,17 @@ void* FindLuaState(void* base_ptr) {
                 
                 uintptr_t stripped_global = STRIP_PAC(global_ptr);
                 if (stripped_global > 0x100000000 && stripped_global < 0x8000000000) {
-                    // We found a valid L. Now get its mainthread directly
+                    // Check if this thread is the global_State->mainthread
                     void* mainthread = NULL;
                     if (safe_read((void*)(stripped_global + 0x1a0), &mainthread, 8)) {
-                        if (STRIP_PAC(mainthread) > 0x100000000) {
-                            return mainthread;
+                        if (STRIP_PAC(mainthread) == stripped_ptr) {
+                            // Verify it has a valid active CallInfo frame
+                            void* ci = NULL;
+                            if (safe_read((void*)(stripped_ptr + 0x50), &ci, 8)) {
+                                if (STRIP_PAC(ci) > 0x100000000) {
+                                    return ptr; // Return original pointer with PAC intact
+                                }
+                            }
                         }
                     }
                 }
@@ -193,18 +198,22 @@ void ExecuteLuauSource(const char* source, size_t size) {
     uintptr_t base = get_robloxlib_base();
     luau_load_t luau_load = (luau_load_t)(base + OFFSET_LUAU_LOAD);
     lua_pcall_t lua_pcall = (lua_pcall_t)(base + OFFSET_LUA_PCALL);
-    lua_settop_t lua_settop = (lua_settop_t)(base + OFFSET_LUA_SETTOP);
+    lua_newthread_t lua_newthread = (lua_newthread_t)(base + OFFSET_LUA_NEWTHREAD);
+
+    SporkLog(@"Creating new thread...");
+    void* new_L = lua_newthread(g_L);
+    if (!new_L) {
+        SporkLog(@"Error: Failed to create thread.");
+        return;
+    }
 
     SporkLog(@"Compiling and executing source...");
     
-    // Clear the stack to ensure luau_load has a clean environment
-    lua_settop(g_L, 0);
-    
     // Pass 0 for env to use the default global environment
-    int status = luau_load(g_L, "SporkScript", source, size, 0);
+    int status = luau_load(new_L, "SporkScript", source, size, 0);
     
     if (status == 0) {
-        lua_pcall(g_L, 0, 0, 0);
+        lua_pcall(new_L, 0, 0, 0);
         SporkLog(@"Success: Source Executed Successfully!");
     } else {
         SporkLog(@"Error: Compile/Load Failed with status %d", status);
