@@ -5,14 +5,25 @@ INSTALL_TARGET_PROCESSES = Roblox
 include $(THEOS)/makefiles/common.mk
 
 LIBRARY_NAME = libdobby
-# Exclude x86/Windows and the deprecated folder
 libdobby_FILES = $(shell find Dobby/source -name '*.cc' -o -name '*.c' | grep -v -E '/(x64|x86|Windows|Linux|deprecated)')
 
-# Find ALL directories in Dobby, excluding TINYSTL to prevent Apple header collisions
-# Use ABSOLUTE paths to guarantee headers are found regardless of Theos's working directory
-DOBBY_INCLUDES = $(addprefix -I, $(shell find $(THEOS_PROJECT_DIR)/Dobby -type d | grep -v "/TINYSTL"))
-
-libdobby_CCFLAGS = -std=c++14 -fno-exceptions -fno-rtti -fno-modules $(DOBBY_INCLUDES) -Wno-module-import-in-extern-c -Wno-error
+# Explicitly list every directory Dobby's includes rely on using absolute paths
+libdobby_CCFLAGS = -std=c++14 -fno-exceptions -fno-rtti -fno-modules \
+-I$(THEOS_PROJECT_DIR)/Dobby/include \
+-I$(THEOS_PROJECT_DIR)/Dobby/source \
+-I$(THEOS_PROJECT_DIR)/Dobby/source/core \
+-I$(THEOS_PROJECT_DIR)/Dobby/source/core/arch \
+-I$(THEOS_PROJECT_DIR)/Dobby/source/dobby \
+-I$(THEOS_PROJECT_DIR)/Dobby/source/common \
+-I$(THEOS_PROJECT_DIR)/Dobby/source/MemoryAllocator \
+-I$(THEOS_PROJECT_DIR)/Dobby/source/InterceptRouting \
+-I$(THEOS_PROJECT_DIR)/Dobby/source/TrampolineBridge \
+-I$(THEOS_PROJECT_DIR)/Dobby/source/TrampolineBridge/ClosureTrampolineBridge \
+-I$(THEOS_PROJECT_DIR)/Dobby/source/Backend/UserMode/ExecMemory \
+-I$(THEOS_PROJECT_DIR)/Dobby/external \
+-I$(THEOS_PROJECT_DIR)/Dobby/external/logging \
+-Wno-module-import-in-extern-c \
+-Wno-error
 
 include $(THEOS_MAKE_PATH)/library.mk
 
