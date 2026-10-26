@@ -1,11 +1,9 @@
 #import "SporkUI.h"
 
-// Declare external functions from Tweak.xm
 extern void ExecuteLuauBytecode(const char* bytecode, size_t size);
 extern bool InjectExecutor(void);
 extern bool g_is_injected;
 
-// --- Custom Button for Squish Effect ---
 @interface SporkButton : UIButton
 @end
 @implementation SporkButton
@@ -23,7 +21,6 @@ extern bool g_is_injected;
 }
 @end
 
-// --- Main View Controller ---
 @interface SporkViewController ()
 @property (nonatomic, strong, readwrite) UIView *mainContainer;
 @property (nonatomic, strong, readwrite) UIButton *floatingButton;
@@ -41,7 +38,6 @@ extern bool g_is_injected;
 @property (nonatomic, strong) UILabel *tabLabel;
 @property (nonatomic) NSInteger tabCounter;
 
-// Inject button references
 @property (nonatomic, strong) SporkButton *injectBtn;
 @property (nonatomic, strong) UILabel *statusLabel;
 @end
@@ -60,10 +56,8 @@ extern bool g_is_injected;
     [self setupHacksTab];
     [self setupFloatingButton];
     
-    [self switchTab:1]; // Default to Home tab so they see Inject
+    [self switchTab:1]; // Default to Home Tab
 }
-
-#pragma mark - Setup UI
 
 - (void)setupMainContainer {
     self.mainContainer = [[UIView alloc] init];
@@ -224,8 +218,6 @@ extern bool g_is_injected;
     ]];
 }
 
-#pragma mark - Tabs
-
 - (void)setupEditorTab {
     [self setupContentContainer];
     self.editorTabView = [[UIView alloc] init];
@@ -349,10 +341,8 @@ extern bool g_is_injected;
         [self.homeTabView.bottomAnchor constraintEqualToAnchor:self.contentContainer.bottomAnchor constant:-15],
         [title.topAnchor constraintEqualToAnchor:self.homeTabView.topAnchor constant:10],
         [title.leadingAnchor constraintEqualToAnchor:self.homeTabView.leadingAnchor constant:10],
-        
         [self.statusLabel.topAnchor constraintEqualToAnchor:title.bottomAnchor constant:8],
         [self.statusLabel.leadingAnchor constraintEqualToAnchor:self.homeTabView.leadingAnchor constant:10],
-        
         [self.injectBtn.topAnchor constraintEqualToAnchor:self.statusLabel.bottomAnchor constant:20],
         [self.injectBtn.leadingAnchor constraintEqualToAnchor:self.homeTabView.leadingAnchor constant:10],
         [self.injectBtn.trailingAnchor constraintEqualToAnchor:self.homeTabView.trailingAnchor constant:-10],
@@ -412,8 +402,6 @@ extern bool g_is_injected;
     ]];
 }
 
-#pragma mark - Floating Button
-
 - (void)setupFloatingButton {
     SporkButton *btn = [SporkButton buttonWithType:UIButtonTypeSystem];
     btn.frame = CGRectMake(100, 100, 60, 60);
@@ -429,8 +417,6 @@ extern bool g_is_injected;
     [btn addTarget:self action:@selector(restoreMenu) forControlEvents:UIControlEventTouchUpInside];
     self.floatingButton = btn;
 }
-
-#pragma mark - Actions
 
 - (void)sidebarTapped:(SporkButton *)sender { [self switchTab:sender.tag]; }
 
@@ -458,6 +444,9 @@ extern bool g_is_injected;
         self.injectBtn.backgroundColor = [UIColor darkGrayColor];
         [self.injectBtn setTitle:@"Injected" forState:UIControlStateNormal];
         self.injectBtn.enabled = NO;
+    } else {
+        self.statusLabel.text = @"Injection Failed (Try again in-game)";
+        self.statusLabel.textColor = [UIColor redColor];
     }
 }
 
@@ -502,19 +491,10 @@ extern bool g_is_injected;
     [self presentViewController:alert animated:YES completion:nil];
 }
 
-- (void)copyAction {
-    if (self.scriptEditor.text.length > 0) [UIPasteboard generalPasteboard].string = self.scriptEditor.text;
-}
-- (void)pasteAction {
-    NSString *pasteString = [UIPasteboard generalPasteboard].string;
-    if (pasteString) self.scriptEditor.text = [self.scriptEditor.text stringByAppendingString:pasteString];
-}
+- (void)copyAction { if (self.scriptEditor.text.length > 0) [UIPasteboard generalPasteboard].string = self.scriptEditor.text; }
+- (void)pasteAction { NSString *pasteString = [UIPasteboard generalPasteboard].string; if (pasteString) self.scriptEditor.text = [self.scriptEditor.text stringByAppendingString:pasteString]; }
 - (void)clearAction { self.scriptEditor.text = @""; }
-- (void)newTabAction {
-    self.tabCounter++;
-    self.tabLabel.text = [NSString stringWithFormat:@"Script %ld  x", (long)self.tabCounter];
-    self.scriptEditor.text = @"";
-}
+- (void)newTabAction { self.tabCounter++; self.tabLabel.text = [NSString stringWithFormat:@"Script %ld  x", (long)self.tabCounter]; self.scriptEditor.text = @""; }
 
 - (void)hideMenu {
     [UIView animateWithDuration:0.2 delay:0 options:UIViewAnimationOptionCurveEaseIn animations:^{
@@ -542,8 +522,6 @@ extern bool g_is_injected;
         self.mainContainer.alpha = 1;
     } completion:nil];
 }
-
-#pragma mark - Drag & Smooth Recoil
 
 - (void)handlePan:(UIPanGestureRecognizer *)sender {
     CGPoint translation = [sender translationInView:self.view];
