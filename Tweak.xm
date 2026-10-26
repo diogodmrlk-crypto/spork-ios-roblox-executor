@@ -91,7 +91,7 @@ uintptr_t get_robloxlib_base(void) {
     return 0;
 }
 
-// The exact scanner that successfully found the L in your earlier logs
+// Bulletproof scanner with full global_State validation
 void* FindLuaState(void* base_ptr) {
     if (!base_ptr) return NULL;
     uintptr_t base = STRIP_PAC(base_ptr);
@@ -103,20 +103,29 @@ void* FindLuaState(void* base_ptr) {
         uintptr_t stripped_ptr = STRIP_PAC(ptr);
         if (stripped_ptr > 0x100000000 && stripped_ptr < 0x8000000000) {
             uint8_t tt = 0;
-            if (!safe_read((void*)(stripped_ptr + 0x2), &tt, 1)) continue;
+            if (!safe_read((void*)(stripped_ptr + 0x2), &tt, 1) || tt != 9) continue;
             
-            if (tt == 9) { // LUA_TTHREAD
-                void* global_ptr = NULL;
-                if (!safe_read((void*)(stripped_ptr + 0x78), &global_ptr, 8)) continue;
+            void* global_ptr = NULL;
+            if (!safe_read((void*)(stripped_ptr + 0x78), &global_ptr, 8)) continue;
+            
+            uintptr_t stripped_global = STRIP_PAC(global_ptr);
+            if (stripped_global < 0x100000000 || stripped_global > 0x8000000000) continue;
+            
+            void* mainthread = NULL;
+            if (!safe_read((void*)(stripped_global + 0x1a0), &mainthread, 8)) continue;
+            
+            uintptr_t stripped_mt = STRIP_PAC(mainthread);
+            if (stripped_mt > 0x100000000 && stripped_mt < 0x8000000000) {
+                // Verify mainthread is actually a lua_State
+                uint8_t mt_tt = 0;
+                if (!safe_read((void*)(stripped_mt + 0x2), &mt_tt, 1) || mt_tt != 9) continue;
                 
-                uintptr_t stripped_global = STRIP_PAC(global_ptr);
-                if (stripped_global > 0x100000000 && stripped_global < 0x8000000000) {
-                    void* mainthread = NULL;
-                    if (safe_read((void*)(stripped_global + 0x1a0), &mainthread, 8)) {
-                        if (STRIP_PAC(mainthread) > 0x100000000) {
-                            return mainthread;
-                        }
-                    }
+                // Verify mainthread's global pointer matches the one we found
+                void* mt_global = NULL;
+                if (!safe_read((void*)(stripped_mt + 0x78), &mt_global, 8)) continue;
+                
+                if (STRIP_PAC(mt_global) == stripped_global) {
+                    return mainthread;
                 }
             }
         }
