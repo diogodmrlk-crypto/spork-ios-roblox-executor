@@ -460,7 +460,6 @@ extern bool g_is_injected;
     btn.backgroundColor = [UIColor clearColor]; 
     btn.layer.borderWidth = 0;
     UIImageSymbolConfiguration *config = [UIImageSymbolConfiguration configurationWithPointSize:30 weight:UIImageSymbolWeightBold];
-    // FIXED: Changed imageNamed: to systemImageNamed:
     [btn setImage:[UIImage systemImageNamed:@"hare.fill" withConfiguration:config] forState:UIControlStateNormal];
     [btn setTintColor:[UIColor whiteColor]];
     btn.hidden = YES;
@@ -513,11 +512,10 @@ extern bool g_is_injected;
         return;
     }
 
-    // Execute plain text Luau source code
     const char* iy_source = "print('Infinite Yield Loaded!')";
     ExecuteLuauSource(iy_source, strlen(iy_source));
     
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Spork" message:@"Infinite Yield script executed!" preferredStyle:UIAlertControllerStyleAlert];
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Spork" message:@"Infinite Yield script queued!" preferredStyle:UIAlertControllerStyleAlert];
     [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
     [self presentViewController:alert animated:YES completion:nil];
 }
