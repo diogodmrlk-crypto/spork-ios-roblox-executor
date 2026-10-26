@@ -50,6 +50,11 @@ typedef void* (*lua_newthread_t)(void* L);
 typedef void (*luaL_sandboxthread_t)(void* L);
 
 bool g_is_injected = false;
+
+// FIX: Added g_execution_method back so SporkUI.mm can link to it.
+// The backend ignores this and uses the safe lua_newthread method regardless.
+int g_execution_method = 1; 
+
 static NSMutableArray<NSString *> *g_scriptQueue = nil;
 static const char* g_current_script_source = NULL;
 static size_t g_current_script_size = 0;
