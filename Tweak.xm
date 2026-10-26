@@ -2,7 +2,15 @@
 #import <mach-o/dyld.h>
 #import <string.h>
 #import "SporkUI.h"
-#include "dobby.h"
+
+// Manually declare DobbyHook to avoid the dobby.h C++ module conflicts
+#ifdef __cplusplus
+extern "C" {
+#endif
+int DobbyHook(void *address, void *replace_func, void **origin_func);
+#ifdef __cplusplus
+}
+#endif
 
 // --- Offsets for Roblox 2.744.0.1077 (Relative to RobloxLib) ---
 #define OFFSET_LUA_GETTOP       0x448e048
