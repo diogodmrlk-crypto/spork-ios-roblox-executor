@@ -78,32 +78,48 @@ uintptr_t get_robloxlib_base(void) {
     return 0;
 }
 
-// --- The Raw Inline Hook ---
+// --- The Safe Mach VM Remap Hook ---
 void install_hook(void* target, void* hook) {
-    // Create a trampoline to run the original instructions
-    void* trampoline = mmap(NULL, 4096, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    memcpy(trampoline, target, 16);
+    kern_return_t kr;
+    mach_vm_address_t page = (mach_vm_address_t)target & ~0xFFF;
+    mach_vm_address_t new_page = 0;
+    vm_prot_t cur_prot, max_prot;
+
+    // 1. Map a copy of the page
+    kr = mach_vm_remap(mach_task_self(), &new_page, 0x1000, 0, VM_FLAGS_ANYWHERE, mach_task_self(), page, false, &cur_prot, &max_prot, VM_INHERIT_NONE);
+    if (kr != KERN_SUCCESS) return;
+
+    // 2. Make it writable
+    kr = vm_protect(mach_task_self(), new_page, 0x1000, false, VM_PROT_READ | VM_PROT_WRITE);
     
-    // Add jump back to target+16
+    uintptr_t offset = (uintptr_t)target - page;
+    void* new_target = (void*)(new_page + offset);
+
+    // 3. Create trampoline (copy original instructions)
+    void* trampoline = mmap(NULL, 4096, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    memcpy(trampoline, new_target, 16);
+    
     uint32_t* tramp_code = (uint32_t*)((uintptr_t)trampoline + 16);
     tramp_code[0] = 0x58000050; // ldr x16, #8
     tramp_code[1] = 0xD61F0200; // br x16
     *(uint64_t*)((uintptr_t)trampoline + 24) = (uintptr_t)target + 16;
-    
-    // Cast the trampoline to the function pointer
+
     orig_lua_pcall = (lua_pcall_t)trampoline;
-    
-    // Write the jump to our hook at the start of the target function
-    uintptr_t page = (uintptr_t)target & ~0xFFF;
-    vm_protect(mach_task_self(), page, 0x1000, false, VM_PROT_READ | VM_PROT_WRITE | VM_PROT_EXECUTE);
-    
-    uint32_t* target_code = (uint32_t*)target;
+
+    // 4. Patch the new page with jump to our hook
+    uint32_t* target_code = (uint32_t*)new_target;
     target_code[0] = 0x58000050; // ldr x16, #8
     target_code[1] = 0xD61F0200; // br x16
-    *(uint64_t*)((uintptr_t)target + 8) = (uintptr_t)hook;
+    *(uint64_t*)((uintptr_t)new_target + 8) = (uintptr_t)hook;
+
+    // 5. Change permissions back to RX
+    vm_protect(mach_task_self(), new_page, 0x1000, false, VM_PROT_READ | VM_PROT_EXECUTE);
     
-    sys_icache_invalidate(target, 16);
-    vm_protect(mach_task_self(), page, 0x1000, false, VM_PROT_READ | VM_PROT_EXECUTE);
+    // 6. Remap back over the original location
+    mach_vm_address_t dummy = 0;
+    mach_vm_remap(mach_task_self(), &dummy, 0x1000, 0, VM_FLAGS_FIXED | VM_FLAGS_OVERWRITE, mach_task_self(), new_page, false, &cur_prot, &max_prot, VM_INHERIT_NONE);
+    
+    sys_icache_invalidate((void*)page, 0x1000);
 }
 
 // --- Hook Function ---
@@ -141,7 +157,7 @@ bool InjectExecutor(void) {
         return false;
     }
 
-    // Install the inline hook for lua_pcall
+    // Install the safe inline hook for lua_pcall
     void* target_pcall = (void*)(base + OFFSET_LUA_PCALL);
     install_hook(target_pcall, (void*)my_lua_pcall);
     
