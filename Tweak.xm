@@ -105,7 +105,7 @@ void SporkLog(NSString *format, ...) {
 
 bool safe_read(void* address, void* buffer, size_t size) {
     uintptr_t addr = STRIP_PAC(address);
-    if (addr < 0x100000000 || addr > 0x400000000) return false;
+    if (addr < 0x100000000) return false; // Basic lower bound
     
     vm_size_t out_size;
     kern_return_t kr = vm_read_overwrite(mach_task_self(), (vm_address_t)addr, (vm_size_t)size, (vm_address_t)buffer, &out_size);
@@ -123,7 +123,7 @@ uintptr_t get_robloxlib_base(void) {
     return 0;
 }
 
-// --- DIAGNOSTIC: Reads and logs exactly what is at the ScriptContext offset ---
+// --- FIXED: Reads, decrypts, and validates the Lua State ---
 void* GetLuaStateFromScriptContext(void* script_context) {
     if (!script_context) return NULL;
     uintptr_t ctx_addr = STRIP_PAC(script_context);
@@ -139,14 +139,24 @@ void* GetLuaStateFromScriptContext(void* script_context) {
     uint32_t high = (uint32_t)encrypted_array_addr - encrypted[1];
     uintptr_t lua_state_ptr = ((uint64_t)high << 32) | low;
 
-    // SNITCH: Print exactly what we found at this offset
-    SporkLog(@"[Scan] SC: %p | enc[0]: 0x%08X | enc[1]: 0x%08X | L: %p", 
-             (void*)ctx_addr, encrypted[0], encrypted[1], (void*)lua_state_ptr);
-
-    if (lua_state_ptr < 0x100000000 || lua_state_ptr > 0x400000000) {
+    // FIXED: Allow 64-bit pointers up to 0x7FFFFFFFFFFF
+    if (lua_state_ptr < 0x100000000 || lua_state_ptr > 0x7FFFFFFFFFFF) {
         return NULL;
     }
 
+    // NEW: Verify this is actually a Lua Thread by checking the 'tt' byte (9 = LUA_TTHREAD)
+    uint8_t tt = 0;
+    bool is_thread = false;
+    // Try +0x8 first (Standard arm64 offset)
+    if (safe_read((void*)(lua_state_ptr + 0x8), &tt, 1) && tt == 9) is_thread = true;
+    // Fallback to +0x2 just in case
+    else if (safe_read((void*)(lua_state_ptr + 0x2), &tt, 1) && tt == 9) is_thread = true;
+
+    if (!is_thread) {
+        return NULL; // Decrypted to a valid memory address, but it's not a Lua thread
+    }
+
+    SporkLog(@"[Scan] ✅ VALID SC: %p | L: %p", (void*)ctx_addr, (void*)lua_state_ptr);
     return (void*)lua_state_ptr;
 }
 
@@ -289,7 +299,6 @@ bool InjectExecutor(void) {
 
     SporkLog(@"Scanning Jobs for a valid ScriptContext...");
 
-    // Iterate through ALL jobs, checking each one for a valid Lua State
     for (uintptr_t ptr = start; ptr < end; ptr += 0x10) {
         void* j = NULL;
         if (!safe_read((void*)ptr, &j, 8) || !j) continue;
@@ -301,13 +310,12 @@ bool InjectExecutor(void) {
             job_count++;
             job_sc = (void*)STRIP_PAC(job_sc);
             
-            // Test the decryption on this specific job
+            // This function now fully validates the decrypted pointer
             void* L = GetLuaStateFromScriptContext(job_sc);
             
             if (L) {
-                SporkLog(@"✅ Found valid Lua VM! Job: %p | SC: %p", j, job_sc);
                 target_job = j;
-                break; // We found the live one
+                break; // Found the live Lua VM!
             }
         }
     }
