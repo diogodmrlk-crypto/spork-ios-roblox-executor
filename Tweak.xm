@@ -13,9 +13,9 @@
 #define OFFSET_TS_JOBS_END        0xd8
 #define OFFSET_JOB_SCRIPT_CTX     0x1b0
 #define OFFSET_LUAU_LOAD          0x44bc110
-#define OFFSET_LUA_PCALL          0x4490fec
 #define OFFSET_LUA_NEWTHREAD      0x448df3c
 #define OFFSET_LUAL_SANDBOXTHREAD 0x1a12ad4
+#define OFFSET_SPAWN              0x19a56ec
 
 // --- Pass-Through Window ---
 @interface PassThroughWindow : UIWindow
@@ -41,10 +41,10 @@
 static PassThroughWindow *overlayWindow = nil;
 
 // --- Executor Logic ---
-typedef int (*lua_pcall_t)(void* L, int nargs, int nresults, int errfunc);
 typedef int (*luau_load_t)(void* L, const char* chunkname, const char* data, size_t size, int env);
 typedef void* (*lua_newthread_t)(void* L);
 typedef void (*luaL_sandboxthread_t)(void* L);
+typedef void (*spawn_t)(void* L);
 
 static void* g_L = NULL;
 bool g_is_injected = false;
@@ -86,7 +86,8 @@ void SporkLog(NSString *format, ...) {
 
 bool safe_read(void* address, void* buffer, size_t size) {
     uintptr_t addr = STRIP_PAC(address);
-    if (addr < 0x100000000 || addr > 0x8000000000) return false;
+    // The address 0xf94006d6a9027fff is a false positive. Real iOS heap addresses are much lower.
+    if (addr < 0x100000000 || addr > 0x7FFFFFFFFFFF) return false;
     
     vm_size_t out_size;
     kern_return_t kr = vm_read_overwrite(mach_task_self(), (vm_address_t)addr, (vm_size_t)size, (vm_address_t)buffer, &out_size);
@@ -113,7 +114,7 @@ void* FindLuaState(void* base_ptr) {
         if (!safe_read((void*)(base + i), &ptr, 8)) continue;
         
         uintptr_t stripped_ptr = STRIP_PAC(ptr);
-        if (stripped_ptr > 0x100000000 && stripped_ptr < 0x8000000000) {
+        if (stripped_ptr > 0x100000000 && stripped_ptr < 0x7FFFFFFFFFFF) {
             uint8_t tt = 0;
             if (!safe_read((void*)(stripped_ptr + 0x2), &tt, 1)) continue;
             
@@ -122,7 +123,7 @@ void* FindLuaState(void* base_ptr) {
                 if (!safe_read((void*)(stripped_ptr + 0x78), &global_ptr, 8)) continue;
                 
                 uintptr_t stripped_global = STRIP_PAC(global_ptr);
-                if (stripped_global > 0x100000000 && stripped_global < 0x8000000000) {
+                if (stripped_global > 0x100000000 && stripped_global < 0x7FFFFFFFFFFF) {
                     void* mainthread = NULL;
                     if (safe_read((void*)(stripped_global + 0x1a0), &mainthread, 8)) {
                         if (STRIP_PAC(mainthread) > 0x100000000) {
@@ -205,13 +206,12 @@ void ProcessScriptQueue() {
 
     uintptr_t base = get_robloxlib_base();
     luau_load_t luau_load = (luau_load_t)(base + OFFSET_LUAU_LOAD);
-    lua_pcall_t lua_pcall = (lua_pcall_t)(base + OFFSET_LUA_PCALL);
     lua_newthread_t lua_newthread = (lua_newthread_t)(base + OFFSET_LUA_NEWTHREAD);
     luaL_sandboxthread_t luaL_sandboxthread = (luaL_sandboxthread_t)(base + OFFSET_LUAL_SANDBOXTHREAD);
+    spawn_t spawn_func = (spawn_t)(base + OFFSET_SPAWN);
 
     SporkLog(@"Creating isolated coroutine...");
     
-    // Signal handler setup for crash protection
     in_lua_exec = 1;
     int sig = sigsetjmp(jump_buffer, 1);
     
@@ -226,18 +226,18 @@ void ProcessScriptQueue() {
         luaL_sandboxthread(new_L);
 
         const char *source = [script UTF8String];
-        SporkLog(@"Executing script...");
+        SporkLog(@"Compiling script...");
         
         int status = luau_load(new_L, "SporkScript", source, strlen(source), 0);
         if (status == 0) {
-            lua_pcall(new_L, 0, 0, 0);
-            SporkLog(@"Success: Script executed!");
+            // Use spawn to schedule the script on the game's thread
+            spawn_func(new_L);
+            SporkLog(@"Success: Script queued on engine thread!");
         } else {
             SporkLog(@"Error: Compile/Load Failed with status %d", status);
         }
         in_lua_exec = 0;
     } else {
-        // We caught the SIGSEGV / SIGBUS!
         in_lua_exec = 0;
         SporkLog(@"CRASH CAUGHT: VM fault (Signal %d). The app is safe.", sig);
     }
