@@ -106,7 +106,7 @@ uintptr_t get_robloxlib_base(void) {
     return 0;
 }
 
-// Strict validation with stack bounds to prevent ASCII/fake addresses
+// Reverted scanner with base_ci check to filter out strings like 0x174736e49
 void* FindLuaState(void* base_ptr) {
     if (!base_ptr) return NULL;
     uintptr_t base = STRIP_PAC(base_ptr);
@@ -126,18 +126,9 @@ void* FindLuaState(void* base_ptr) {
             uintptr_t stripped_global = STRIP_PAC(global_ptr);
             if (stripped_global < 0x100000000 || stripped_global > 0x400000000) continue;
             
-            // Verify the stack pointers to ensure it's a real lua_State
-            uintptr_t stack = 0, top = 0, stack_last = 0;
-            if (!safe_read((void*)(stripped_ptr + 0x60), &stack, 8)) continue;
-            if (!safe_read((void*)(stripped_ptr + 0x68), &stack_last, 8)) continue;
-            if (!safe_read((void*)(stripped_ptr + 0x70), &top, 8)) continue;
-            
-            stack = STRIP_PAC(stack);
-            top = STRIP_PAC(top);
-            stack_last = STRIP_PAC(stack_last);
-            
-            if (stack < 0x100000000 || stack > 0x400000000) continue;
-            if (top < stack || top > stack_last) continue;
+            void* base_ci = NULL;
+            if (!safe_read((void*)(stripped_ptr + 0x18), &base_ci, 8)) continue;
+            if (STRIP_PAC(base_ci) < 0x100000000) continue;
             
             void* mainthread = NULL;
             if (safe_read((void*)(stripped_global + 0x1a0), &mainthread, 8)) {
@@ -172,7 +163,7 @@ void my_job_step(void* job) {
                 lua_newthread_t lua_newthread = (lua_newthread_t)(base + OFFSET_LUA_NEWTHREAD);
                 luaL_sandboxthread_t luaL_sandboxthread = (luaL_sandboxthread_t)(base + OFFSET_LUAL_SANDBOXTHREAD);
                 
-                SporkLog(@"Found strict L: %p. Creating coroutine...", live_L);
+                SporkLog(@"Found live L: %p. Creating coroutine...", live_L);
                 
                 in_hook_exec = 1;
                 int sig = sigsetjmp(hook_jump_buffer, 1);
@@ -199,7 +190,7 @@ void my_job_step(void* job) {
                     SporkLog(@"HOOK CRASH CAUGHT: Signal %d. The app is safe.", sig);
                 }
             } else {
-                SporkLog(@"Error: Could not find a strictly valid live thread.");
+                SporkLog(@"Error: Could not find a live thread.");
                 [g_scriptQueue removeAllObjects];
             }
         }
