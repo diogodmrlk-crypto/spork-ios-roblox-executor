@@ -187,7 +187,6 @@ void ExecuteLuauSource(const char* source, size_t size) {
     luau_load_t luau_load = (luau_load_t)(base + OFFSET_LUAU_LOAD);
     lua_pcall_t lua_pcall = (lua_pcall_t)(base + OFFSET_LUA_PCALL);
 
-    // We removed lua_settop to prevent stack corruption
     int status = luau_load(g_L, "SporkScript", source, size, 0);
     
     if (status == 0) {
