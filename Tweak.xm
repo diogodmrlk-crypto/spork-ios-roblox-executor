@@ -8,6 +8,9 @@
 #import <libkern/OSCacheControl.h>
 #import "SporkUI.h"
 
+// Forward declare mach_vm_remap because Apple hides it in newer SDKs
+extern kern_return_t mach_vm_remap(vm_map_t target_task, uint64_t *target_address, uint64_t size, uint64_t mask, int flags, vm_map_t src_task, uint64_t src_address, boolean_t copy, vm_prot_t *cur_protection, vm_prot_t *max_protection, vm_inherit_t inheritance);
+
 // --- Offsets for Roblox 2.744.0.1077 (Relative to RobloxLib) ---
 #define OFFSET_LUA_PCALL          0x4490fec
 #define OFFSET_LUAU_LOAD          0x44bc110
@@ -81,17 +84,24 @@ uintptr_t get_robloxlib_base(void) {
 // --- The Safe Mach VM Remap Hook ---
 void install_hook(void* target, void* hook) {
     kern_return_t kr;
-    mach_vm_address_t page = (mach_vm_address_t)target & ~0xFFF;
-    mach_vm_address_t new_page = 0;
+    uint64_t page = (uint64_t)target & ~0x3FFF; // 16KB page alignment for iOS
+    uint64_t new_page = 0;
     vm_prot_t cur_prot, max_prot;
 
     // 1. Map a copy of the page
-    kr = mach_vm_remap(mach_task_self(), &new_page, 0x1000, 0, VM_FLAGS_ANYWHERE, mach_task_self(), page, false, &cur_prot, &max_prot, VM_INHERIT_NONE);
-    if (kr != KERN_SUCCESS) return;
+    kr = mach_vm_remap(mach_task_self(), &new_page, 0x4000, 0, VM_FLAGS_ANYWHERE, mach_task_self(), page, false, &cur_prot, &max_prot, VM_INHERIT_NONE);
+    if (kr != KERN_SUCCESS) {
+        SporkLog(@"mach_vm_remap failed: %d", kr);
+        return;
+    }
 
     // 2. Make it writable
-    kr = vm_protect(mach_task_self(), new_page, 0x1000, false, VM_PROT_READ | VM_PROT_WRITE);
-    
+    kr = vm_protect(mach_task_self(), (vm_address_t)new_page, 0x4000, false, VM_PROT_READ | VM_PROT_WRITE);
+    if (kr != KERN_SUCCESS) {
+        SporkLog(@"vm_protect failed: %d", kr);
+        return;
+    }
+
     uintptr_t offset = (uintptr_t)target - page;
     void* new_target = (void*)(new_page + offset);
 
@@ -113,13 +123,17 @@ void install_hook(void* target, void* hook) {
     *(uint64_t*)((uintptr_t)new_target + 8) = (uintptr_t)hook;
 
     // 5. Change permissions back to RX
-    vm_protect(mach_task_self(), new_page, 0x1000, false, VM_PROT_READ | VM_PROT_EXECUTE);
+    vm_protect(mach_task_self(), (vm_address_t)new_page, 0x4000, false, VM_PROT_READ | VM_PROT_EXECUTE);
     
     // 6. Remap back over the original location
-    mach_vm_address_t dummy = 0;
-    mach_vm_remap(mach_task_self(), &dummy, 0x1000, 0, VM_FLAGS_FIXED | VM_FLAGS_OVERWRITE, mach_task_self(), new_page, false, &cur_prot, &max_prot, VM_INHERIT_NONE);
+    uint64_t dummy = 0;
+    kr = mach_vm_remap(mach_task_self(), &dummy, 0x4000, 0, VM_FLAGS_FIXED | VM_FLAGS_OVERWRITE, mach_task_self(), new_page, false, &cur_prot, &max_prot, VM_INHERIT_NONE);
     
-    sys_icache_invalidate((void*)page, 0x1000);
+    if (kr != KERN_SUCCESS) {
+        SporkLog(@"mach_vm_remap FIXED failed: %d", kr);
+    }
+    
+    sys_icache_invalidate((void*)page, 0x4000);
 }
 
 // --- Hook Function ---
