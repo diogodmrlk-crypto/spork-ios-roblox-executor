@@ -1,15 +1,11 @@
 #import <UIKit/UIKit.h>
 #import <mach-o/dyld.h>
 #import <string.h>
-#import <mach/mach.h>
-#import <mach/vm_map.h>
+#import <substrate.h>
 #import "SporkUI.h"
 
 // --- Offsets for Roblox 2.744.0.1077 (Relative to RobloxLib) ---
-#define OFFSET_TASKSCHEDULER    0x6a6d7c0
-#define OFFSET_TS_JOBS_START    0xd0
-#define OFFSET_TS_JOBS_END      0xd8
-#define OFFSET_JOB_SCRIPT_CTX   0x1b0
+#define OFFSET_LUA_GETTOP       0x448e048
 #define OFFSET_LUAU_LOAD        0x44bc110
 #define OFFSET_LUA_PCALL        0x4490fec
 
@@ -39,8 +35,10 @@ static PassThroughWindow *overlayWindow = nil;
 // --- Executor Logic ---
 typedef int (*lua_pcall_t)(void* L, int nargs, int nresults, int errfunc);
 typedef int (*luau_load_t)(void* L, const char* chunkname, const char* data, size_t size, int env);
+typedef int (*lua_gettop_t)(void* L);
 
 static void* g_L = NULL;
+static lua_gettop_t orig_lua_gettop = NULL;
 bool g_is_injected = false;
 
 // --- Logging System ---
@@ -65,17 +63,6 @@ void SporkLog(NSString *format, ...) {
     });
 }
 
-#define STRIP_PAC(ptr) ((uintptr_t)(ptr) & 0x000000FFFFFFFFFF)
-
-bool safe_read(void* address, void* buffer, size_t size) {
-    uintptr_t addr = STRIP_PAC(address);
-    if (addr < 0x100000000 || addr > 0x8000000000) return false;
-    
-    vm_size_t out_size;
-    kern_return_t kr = vm_read_overwrite(mach_task_self(), (vm_address_t)addr, (vm_size_t)size, (vm_address_t)buffer, &out_size);
-    return (kr == KERN_SUCCESS && out_size == size);
-}
-
 uintptr_t get_robloxlib_base(void) {
     uint32_t count = _dyld_image_count();
     for (uint32_t i = 0; i < count; i++) {
@@ -87,37 +74,14 @@ uintptr_t get_robloxlib_base(void) {
     return 0;
 }
 
-// The exact scanner that successfully found the L in your logs
-void* FindLuaState(void* base_ptr) {
-    if (!base_ptr) return NULL;
-    uintptr_t base = STRIP_PAC(base_ptr);
-    
-    for (int i = 0; i < 0x200000; i += 8) {
-        void* ptr = NULL;
-        if (!safe_read((void*)(base + i), &ptr, 8)) continue;
-        
-        uintptr_t stripped_ptr = STRIP_PAC(ptr);
-        if (stripped_ptr > 0x100000000 && stripped_ptr < 0x8000000000) {
-            uint8_t tt = 0;
-            if (!safe_read((void*)(stripped_ptr + 0x2), &tt, 1)) continue;
-            
-            if (tt == 9) { // LUA_TTHREAD
-                void* global_ptr = NULL;
-                if (!safe_read((void*)(stripped_ptr + 0x78), &global_ptr, 8)) continue;
-                
-                uintptr_t stripped_global = STRIP_PAC(global_ptr);
-                if (stripped_global > 0x100000000 && stripped_global < 0x8000000000) {
-                    void* mainthread = NULL;
-                    if (safe_read((void*)(stripped_global + 0x1a0), &mainthread, 8)) {
-                        if (STRIP_PAC(mainthread) > 0x100000000) {
-                            return mainthread;
-                        }
-                    }
-                }
-            }
-        }
+// --- Hook Function ---
+int my_lua_gettop(void* L) {
+    // Capture the very first valid Lua State we see from the engine
+    if (!g_L) {
+        g_L = L;
+        SporkLog(@"[Spork] Hooked lua_gettop! Captured Active L: %p", L);
     }
-    return NULL;
+    return orig_lua_gettop(L);
 }
 
 bool InjectExecutor(void) {
@@ -129,60 +93,22 @@ bool InjectExecutor(void) {
         SporkLog(@"Error: Failed to find RobloxLib base.");
         return false;
     }
-    
-    void* task_scheduler = NULL;
-    if (!safe_read((void*)(base + OFFSET_TASKSCHEDULER), &task_scheduler, 8) || !task_scheduler) {
-        SporkLog(@"Error: Failed to find TaskScheduler.");
-        return false;
-    }
-    task_scheduler = (void*)STRIP_PAC(task_scheduler);
-    
-    uintptr_t start = 0, end = 0;
-    safe_read((char*)task_scheduler + OFFSET_TS_JOBS_START, &start, 8);
-    safe_read((char*)task_scheduler + OFFSET_TS_JOBS_END, &end, 8);
-    
-    start = STRIP_PAC(start);
-    end = STRIP_PAC(end);
 
-    if (!start || !end || end <= start) {
-        SporkLog(@"Error: Invalid job list pointers.");
-        return false;
-    }
-
-    int jobCount = 0;
-    for (uintptr_t ptr = start; ptr < end; ptr += 0x10) {
-        void* j = NULL;
-        if (!safe_read((void*)ptr, &j, 8) || !j) continue;
-        
-        uintptr_t stripped_j = STRIP_PAC(j);
-        jobCount++;
-        
-        void* script_context = NULL;
-        if (safe_read((char*)stripped_j + OFFSET_JOB_SCRIPT_CTX, &script_context, 8) && script_context) {
-            script_context = (void*)STRIP_PAC(script_context);
-            
-            g_L = FindLuaState(script_context);
-            if (g_L) {
-                SporkLog(@"Success: Found mainthread in ScriptContext: %p", g_L);
-                g_is_injected = true;
-                return true;
-            }
-            
-            g_L = FindLuaState((void*)stripped_j);
-            if (g_L) {
-                SporkLog(@"Success: Found mainthread in Job: %p", g_L);
-                g_is_injected = true;
-                return true;
-            }
-        }
-    }
+    void* target = (void*)(base + OFFSET_LUA_GETTOP);
     
-    SporkLog(@"Scanned %d jobs, but could not find a valid lua_State.", jobCount);
-    return false;
+    // Install the inline hook using Substrate
+    MSHookFunction(target, (void*)my_lua_gettop, (void**)&orig_lua_gettop);
+    
+    SporkLog(@"Success: Hooked lua_gettop! Waiting for engine...");
+    g_is_injected = true;
+    return true;
 }
 
 void ExecuteLuauSource(const char* source, size_t size) {
-    if (!g_is_injected || !g_L) {
+    if (!g_is_injected) return;
+    
+    if (!g_L) {
+        SporkLog(@"Error: Lua State not captured yet. Wait a second and try again.");
         return;
     }
 
@@ -190,7 +116,7 @@ void ExecuteLuauSource(const char* source, size_t size) {
     luau_load_t luau_load = (luau_load_t)(base + OFFSET_LUAU_LOAD);
     lua_pcall_t lua_pcall = (lua_pcall_t)(base + OFFSET_LUA_PCALL);
 
-    // No lua_settop! Just load and execute.
+    SporkLog(@"Executing on captured L: %p", g_L);
     int status = luau_load(g_L, "SporkScript", source, size, 0);
     
     if (status == 0) {
