@@ -48,8 +48,7 @@ bool g_is_injected = false;
 static NSMutableArray<NSString *> *g_scriptQueue = nil;
 
 // Hook Trampoline
-static void* orig_lua_pcall = NULL;
-static uint8_t original_bytes[16];
+static lua_pcall_t orig_lua_pcall = NULL;
 
 // --- Crash-Proof Signal Handler ---
 static sigjmp_buf jump_buffer;
@@ -116,11 +115,13 @@ void install_hook(void* target, void* hook) {
     tramp_code[0] = 0x58000050; // ldr x16, #8
     tramp_code[1] = 0xD61F0200; // br x16
     *(uint64_t*)((uintptr_t)trampoline + 24) = (uintptr_t)target + 16;
-    orig_lua_pcall = trampoline;
+    
+    // Cast the trampoline to the function pointer
+    orig_lua_pcall = (lua_pcall_t)trampoline;
     
     // Write the jump to our hook at the start of the target function
     uintptr_t page = (uintptr_t)target & ~0xFFF;
-    mach_vm_protect(mach_task_self(), page, 0x1000, false, VM_PROT_READ | VM_PROT_WRITE | VM_PROT_EXECUTE);
+    vm_protect(mach_task_self(), page, 0x1000, false, VM_PROT_READ | VM_PROT_WRITE | VM_PROT_EXECUTE);
     
     uint32_t* target_code = (uint32_t*)target;
     target_code[0] = 0x58000050; // ldr x16, #8
@@ -128,7 +129,7 @@ void install_hook(void* target, void* hook) {
     *(uint64_t*)((uintptr_t)target + 8) = (uintptr_t)hook;
     
     sys_icache_invalidate(target, 16);
-    mach_vm_protect(mach_task_self(), page, 0x1000, false, VM_PROT_READ | VM_PROT_EXECUTE);
+    vm_protect(mach_task_self(), page, 0x1000, false, VM_PROT_READ | VM_PROT_EXECUTE);
 }
 
 // --- Hook Function ---
@@ -214,13 +215,11 @@ bool InjectExecutor(void) {
     start = STRIP_PAC(start);
     end = STRIP_PAC(end);
 
-    int jobCount = 0;
     for (uintptr_t ptr = start; ptr < end; ptr += 0x10) {
         void* j = NULL;
         if (!safe_read((void*)ptr, &j, 8) || !j) continue;
         
         uintptr_t stripped_j = STRIP_PAC(j);
-        jobCount++;
         
         void* script_context = NULL;
         if (safe_read((char*)stripped_j + OFFSET_JOB_SCRIPT_CTX, &script_context, 8) && script_context) {
