@@ -16,7 +16,7 @@
 #define OFFSET_LUAU_LOAD          0x44bc110
 #define OFFSET_LUA_PCALL          0x4490fec
 #define OFFSET_LUA_NEWTHREAD      0x448df3c
-#define OFFSET_LUAL_SANDBOXTHREAD 0x1a12ad4 // Sandbox offset to give the thread an environment
+#define OFFSET_LUAL_SANDBOXTHREAD 0x1a12ad4
 
 // --- Pass-Through Window ---
 @interface PassThroughWindow : UIWindow
@@ -130,7 +130,7 @@ void* FindLuaState(void* base_ptr) {
                     if (safe_read((void*)(stripped_global + 0x1a0), &mainthread, 8)) {
                         uintptr_t stripped_mt = STRIP_PAC(mainthread);
                         if (stripped_mt > 0x100000000 && stripped_mt < 0x400000000) {
-                            return mainthread;
+                            return (void*)stripped_mt; // Return pure stripped pointer!
                         }
                     }
                 }
@@ -143,6 +143,15 @@ void* FindLuaState(void* base_ptr) {
 // --- VTable Hook for Job::step ---
 void my_job_step(void* job) {
     if (g_scriptQueue && g_scriptQueue.count > 0 && g_L) {
+        
+        // Ensure g_L is still valid memory before creating a thread
+        uint8_t tt = 0;
+        if (!safe_read((void*)((char*)g_L + 0x2), &tt, 1) || tt != 9) {
+            SporkLog(@"Error: g_L is invalid before execution.");
+            [g_scriptQueue removeAllObjects];
+            goto call_original;
+        }
+
         NSString *script = g_scriptQueue.firstObject;
         [g_scriptQueue removeObjectAtIndex:0];
         
@@ -158,10 +167,8 @@ void my_job_step(void* job) {
         int sig = sigsetjmp(hook_jump_buffer, 1);
         
         if (sig == 0) {
-            // Create new thread
             void* new_L = lua_newthread(g_L);
             if (new_L) {
-                // Sandbox the new thread to give it game/workspace/print access
                 luaL_sandboxthread(new_L);
 
                 const char *source = [script UTF8String];
@@ -182,6 +189,7 @@ void my_job_step(void* job) {
         }
     }
     
+call_original:
     // Call the original step function
     if (orig_job_step) {
         ((void(*)(void*))orig_job_step)(job);
