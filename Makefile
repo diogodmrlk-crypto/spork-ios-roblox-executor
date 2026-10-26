@@ -4,22 +4,19 @@ INSTALL_TARGET_PROCESSES = Roblox
 
 include $(THEOS)/makefiles/common.mk
 
+# 1. Compile Dobby as a separate library (prevents TINYSTL from breaking UIKit)
+LIBRARY_NAME = libdobby
+libdobby_FILES = $(shell find Dobby/source -name '*.cc' -o -name '*.c' | grep -v -E '/(x64|x86|Windows|Linux)/')
+libdobby_CCFLAGS = -std=c++14 -fno-exceptions -fno-rtti -I./Dobby/include -I./Dobby/source -I./Dobby/external -Wno-module-import-in-extern-c
+include $(THEOS_MAKE_PATH)/library.mk
+
+# 2. Compile the Tweak and link the Dobby library
 TWEAK_NAME = Spork
+Spork_FILES = Tweak.xm SporkUI.mm
+Spork_OBJCFLAGS = -fobjc-arc
+Spork_OBJCCFLAGS = -fobjc-arc
 
-# Compile Dobby's core source files, ignoring Windows/Intel
-DOBBY_SRC = $(shell find Dobby/source -name '*.cc' -o -name '*.c' | grep -v -E '/(x64|x86|Windows|Linux)/')
-
-# Find EVERY directory in the Dobby folder and add them all as include paths
-DOBBY_INCLUDES = $(addprefix -I, $(shell find Dobby -type d))
-
-Spork_FILES = Tweak.xm SporkUI.mm $(DOBBY_SRC)
-
-# ONLY apply Dobby includes to C++ files. Do NOT apply to Obj-C files.
-Spork_CCFLAGS = -std=c++14 -fno-exceptions -fno-rtti $(DOBBY_INCLUDES) -Wno-module-import-in-extern-c
-Spork_OBJCFLAGS = -fobjc-arc -Wno-module-import-in-extern-c
-Spork_OBJCCFLAGS = -fobjc-arc -Wno-module-import-in-extern-c
-
-# Link the C++ standard library
-Spork_LIBRARIES = c++
+# Link against our newly built libdobby and the C++ standard library
+Spork_LIBRARIES = libdobby c++
 
 include $(THEOS_MAKE_PATH)/tweak.mk
