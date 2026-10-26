@@ -33,10 +33,10 @@ extern bool g_is_injected;
 @property (nonatomic, strong) UIView *editorTabView;
 @property (nonatomic, strong) UIView *homeTabView;
 @property (nonatomic, strong) UIView *hacksTabView;
-@property (nonatomic, strong) UIView *logsTabView; // New Logs Tab
+@property (nonatomic, strong) UIView *logsTabView;
 
 @property (nonatomic, strong) UITextView *scriptEditor;
-@property (nonatomic, strong) UITextView *logsTextView; // New Logs Text View
+@property (nonatomic, strong) UITextView *logsTextView;
 @property (nonatomic, strong) UILabel *tabLabel;
 @property (nonatomic) NSInteger tabCounter;
 
@@ -56,7 +56,7 @@ extern bool g_is_injected;
     [self setupEditorTab];
     [self setupHomeTab];
     [self setupHacksTab];
-    [self setupLogsTab]; // Setup Logs
+    [self setupLogsTab];
     [self setupFloatingButton];
     
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(updateLogs) name:@"SporkLogUpdated" object:nil];
@@ -177,7 +177,6 @@ extern bool g_is_injected;
     self.sidebar.layer.maskedCorners = kCALayerMinXMinYCorner | kCALayerMinXMaxYCorner;
     [self.mainContainer addSubview:self.sidebar];
 
-    // Added "list.bullet.rectangle" for Logs
     NSArray *icons = @[@"doc.text.fill", @"house.fill", @"bolt.fill", @"chevron.left.forwardslash.chevron.right", @"doc.on.clipboard", @"list.bullet.rectangle"];
     UIStackView *stack = [[UIStackView alloc] init];
     stack.translatesAutoresizingMaskIntoConstraints = NO;
@@ -513,8 +512,9 @@ extern bool g_is_injected;
         return;
     }
 
+    // VALID Luau Version 7 bytecode for: print("Infinite Yield Loaded!")
     static const char iy_bytecode[] = {
-        0x1B, 0x4C, 0x75, 0x61, 0x75, 0x51, 0x00, 0x01, 0x04, 0x04, 0x04, 0x08, 0x00, 
+        0x1B, 0x4C, 0x75, 0x61, 0x75, 0x07, 0x00, 0x01, 0x04, 0x04, 0x04, 0x08, 0x00, 
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
         0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
