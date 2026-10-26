@@ -6,12 +6,14 @@
 #import "SporkUI.h"
 
 // --- Offsets for Roblox 2.744.0.1077 (Relative to RobloxLib) ---
-#define OFFSET_TASKSCHEDULER    0x6a6d7c0
-#define OFFSET_TS_JOBS_START    0xd0
-#define OFFSET_TS_JOBS_END      0xd8
-#define OFFSET_JOB_SCRIPT_CTX   0x1b0
-#define OFFSET_LUAU_LOAD        0x44bc110
-#define OFFSET_LUA_PCALL        0x4490fec
+#define OFFSET_TASKSCHEDULER      0x6a6d7c0
+#define OFFSET_TS_JOBS_START      0xd0
+#define OFFSET_TS_JOBS_END        0xd8
+#define OFFSET_JOB_SCRIPT_CTX     0x1b0
+#define OFFSET_LUAU_LOAD          0x44bc110
+#define OFFSET_LUA_PCALL          0x4490fec
+#define OFFSET_LUA_NEWTHREAD      0x448df3c
+#define OFFSET_LUAL_SANDBOXTHREAD 0x1a12ad4
 
 // --- Pass-Through Window ---
 @interface PassThroughWindow : UIWindow
@@ -39,6 +41,8 @@ static PassThroughWindow *overlayWindow = nil;
 // --- Executor Logic ---
 typedef int (*lua_pcall_t)(void* L, int nargs, int nresults, int errfunc);
 typedef int (*luau_load_t)(void* L, const char* chunkname, const char* data, size_t size, int env);
+typedef void* (*lua_newthread_t)(void* L);
+typedef void (*luaL_sandboxthread_t)(void* L);
 
 static void* g_L = NULL;
 bool g_is_injected = false;
@@ -88,7 +92,6 @@ uintptr_t get_robloxlib_base(void) {
     return 0;
 }
 
-// The exact scanner that successfully found the L in your logs
 void* FindLuaState(void* base_ptr) {
     if (!base_ptr) return NULL;
     uintptr_t base = STRIP_PAC(base_ptr);
@@ -192,14 +195,26 @@ void ProcessScriptQueue() {
     uintptr_t base = get_robloxlib_base();
     luau_load_t luau_load = (luau_load_t)(base + OFFSET_LUAU_LOAD);
     lua_pcall_t lua_pcall = (lua_pcall_t)(base + OFFSET_LUA_PCALL);
+    lua_newthread_t lua_newthread = (lua_newthread_t)(base + OFFSET_LUA_NEWTHREAD);
+    luaL_sandboxthread_t luaL_sandboxthread = (luaL_sandboxthread_t)(base + OFFSET_LUAL_SANDBOXTHREAD);
+
+    SporkLog(@"Creating safe coroutine...");
+    void* new_L = lua_newthread(g_L);
+    if (!new_L) {
+        SporkLog(@"Error: Failed to create thread.");
+        return;
+    }
+    
+    // Sandbox the new thread to give it standard Lua globals
+    luaL_sandboxthread(new_L);
 
     const char *source = [script UTF8String];
-    SporkLog(@"Executing queued script safely...");
+    SporkLog(@"Executing queued script on coroutine...");
     
-    int status = luau_load(g_L, "SporkScript", source, strlen(source), 0);
+    int status = luau_load(new_L, "SporkScript", source, strlen(source), 0);
     if (status == 0) {
-        lua_pcall(g_L, 0, 0, 0);
-        SporkLog(@"Success: Queued script executed!");
+        lua_pcall(new_L, 0, 0, 0);
+        SporkLog(@"Success: Script executed!");
     } else {
         SporkLog(@"Error: Compile/Load Failed with status %d", status);
     }
