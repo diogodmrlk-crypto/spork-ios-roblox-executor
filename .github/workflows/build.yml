@@ -11,9 +11,7 @@ jobs:
         run: |
           git clone --depth 1 --recursive https://github.com/jmpews/Dobby.git Dobby
           # Move the system includes out of extern "C" (fixes Xcode 26 module error).
-          # The original patch never matched because dobby.h also includes <stdbool.h> first.
           perl -0777 -pi -e 's/#ifdef __cplusplus\nextern "C" \{\n#endif\n\n(#include <stdbool\.h>\n#include <stdint\.h>\n#include <sys\/types\.h>\n)/$1\n#ifdef __cplusplus\nextern "C" {\n#endif\n/' Dobby/include/dobby.h
-          # Fail loudly if the patch ever stops matching
           head -12 Dobby/include/dobby.h
           awk '/#include <sys\/types.h>/{i=NR} /extern "C"/ && !e{e=NR} END{exit !(i && e && i<e)}' Dobby/include/dobby.h
 
@@ -59,5 +57,4 @@ jobs:
         with:
           name: Spork-UI-Dylib
           path: |
-            .theos/obj/*.dylib
-            packages/*.deb
+            .theos/obj/**/*.dylib
