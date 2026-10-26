@@ -56,5 +56,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Spork-UI-Dylib
+          # THIS IS THE FIX: The ** grabs the folders. We removed the .deb line.
           path: |
             .theos/obj/**/*.dylib
