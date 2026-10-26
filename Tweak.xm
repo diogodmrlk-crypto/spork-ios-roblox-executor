@@ -89,7 +89,7 @@ uintptr_t get_robloxlib_base(void) {
     return 0;
 }
 
-// Strictly find the mainthread of the global_State
+// Find ANY valid thread, then return its global state's mainthread
 void* FindLuaState(void* base_ptr) {
     if (!base_ptr) return NULL;
     uintptr_t base = STRIP_PAC(base_ptr);
@@ -109,17 +109,11 @@ void* FindLuaState(void* base_ptr) {
                 
                 uintptr_t stripped_global = STRIP_PAC(global_ptr);
                 if (stripped_global > 0x100000000 && stripped_global < 0x8000000000) {
-                    // Check if this thread is the global_State->mainthread
+                    // We found a valid L. Now get its mainthread directly
                     void* mainthread = NULL;
                     if (safe_read((void*)(stripped_global + 0x1a0), &mainthread, 8)) {
-                        if (STRIP_PAC(mainthread) == stripped_ptr) {
-                            // Verify it has a valid active CallInfo frame
-                            void* ci = NULL;
-                            if (safe_read((void*)(stripped_ptr + 0x50), &ci, 8)) {
-                                if (STRIP_PAC(ci) > 0x100000000) {
-                                    return ptr; // Return original pointer with PAC intact
-                                }
-                            }
+                        if (STRIP_PAC(mainthread) > 0x100000000) {
+                            return mainthread;
                         }
                     }
                 }
