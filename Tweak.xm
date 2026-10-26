@@ -8,7 +8,7 @@
 #import <setjmp.h>
 #import "SporkUI.h"
 
-// --- Offsets for Roblox 2.744.0.1077 (Relative to RobloxLib) ---
+// --- Offsets for Roblox 2.744.0.1077 Version (Relative to RobloxLib) ---
 #define OFFSET_TASKSCHEDULER      0x6a6d7c0
 #define OFFSET_TS_JOBS_START      0xd0
 #define OFFSET_TS_JOBS_END        0xd8
