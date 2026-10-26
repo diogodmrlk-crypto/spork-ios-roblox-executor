@@ -15,8 +15,8 @@
 #define OFFSET_JOB_SCRIPT_CTX     0x1b0
 #define OFFSET_LUAU_LOAD          0x44bc110
 #define OFFSET_LUA_PCALL          0x4490fec
-#define OFFSET_LUA_GETTOP         0x448e048
-#define OFFSET_LUA_SETTOP         0x448e05c
+#define OFFSET_LUA_NEWTHREAD      0x448df3c
+#define OFFSET_LUAL_SANDBOXTHREAD 0x1a12ad4
 
 // --- Pass-Through Window ---
 @interface PassThroughWindow : UIWindow
@@ -44,8 +44,8 @@ static PassThroughWindow *overlayWindow = nil;
 // --- Executor Logic ---
 typedef int (*lua_pcall_t)(void* L, int nargs, int nresults, int errfunc);
 typedef int (*luau_load_t)(void* L, const char* chunkname, const char* data, size_t size, int env);
-typedef int (*lua_gettop_t)(void* L);
-typedef void (*lua_settop_t)(void* L, int idx);
+typedef void* (*lua_newthread_t)(void* L);
+typedef void (*luaL_sandboxthread_t)(void* L);
 
 bool g_is_injected = false;
 static NSMutableArray<NSString *> *g_scriptQueue = nil;
@@ -106,6 +106,7 @@ uintptr_t get_robloxlib_base(void) {
     return 0;
 }
 
+// Strict validation with stack bounds to prevent ASCII/fake addresses
 void* FindLuaState(void* base_ptr) {
     if (!base_ptr) return NULL;
     uintptr_t base = STRIP_PAC(base_ptr);
@@ -117,21 +118,32 @@ void* FindLuaState(void* base_ptr) {
         uintptr_t stripped_ptr = STRIP_PAC(ptr);
         if (stripped_ptr > 0x100000000 && stripped_ptr < 0x400000000) {
             uint8_t tt = 0;
-            if (!safe_read((void*)(stripped_ptr + 0x2), &tt, 1)) continue;
+            if (!safe_read((void*)(stripped_ptr + 0x2), &tt, 1) || tt != 9) continue;
             
-            if (tt == 9) { // LUA_TTHREAD
-                void* global_ptr = NULL;
-                if (!safe_read((void*)(stripped_ptr + 0x78), &global_ptr, 8)) continue;
-                
-                uintptr_t stripped_global = STRIP_PAC(global_ptr);
-                if (stripped_global > 0x100000000 && stripped_global < 0x400000000) {
-                    void* mainthread = NULL;
-                    if (safe_read((void*)(stripped_global + 0x1a0), &mainthread, 8)) {
-                        uintptr_t stripped_mt = STRIP_PAC(mainthread);
-                        if (stripped_mt > 0x100000000 && stripped_mt < 0x400000000) {
-                            return (void*)stripped_mt;
-                        }
-                    }
+            void* global_ptr = NULL;
+            if (!safe_read((void*)(stripped_ptr + 0x78), &global_ptr, 8)) continue;
+            
+            uintptr_t stripped_global = STRIP_PAC(global_ptr);
+            if (stripped_global < 0x100000000 || stripped_global > 0x400000000) continue;
+            
+            // Verify the stack pointers to ensure it's a real lua_State
+            uintptr_t stack = 0, top = 0, stack_last = 0;
+            if (!safe_read((void*)(stripped_ptr + 0x60), &stack, 8)) continue;
+            if (!safe_read((void*)(stripped_ptr + 0x68), &stack_last, 8)) continue;
+            if (!safe_read((void*)(stripped_ptr + 0x70), &top, 8)) continue;
+            
+            stack = STRIP_PAC(stack);
+            top = STRIP_PAC(top);
+            stack_last = STRIP_PAC(stack_last);
+            
+            if (stack < 0x100000000 || stack > 0x400000000) continue;
+            if (top < stack || top > stack_last) continue;
+            
+            void* mainthread = NULL;
+            if (safe_read((void*)(stripped_global + 0x1a0), &mainthread, 8)) {
+                uintptr_t stripped_mt = STRIP_PAC(mainthread);
+                if (stripped_mt > 0x100000000 && stripped_mt < 0x400000000) {
+                    return (void*)stripped_mt;
                 }
             }
         }
@@ -157,37 +169,37 @@ void my_job_step(void* job) {
                 
                 luau_load_t luau_load = (luau_load_t)(base + OFFSET_LUAU_LOAD);
                 lua_pcall_t lua_pcall = (lua_pcall_t)(base + OFFSET_LUA_PCALL);
-                lua_gettop_t lua_gettop = (lua_gettop_t)(base + OFFSET_LUA_GETTOP);
-                lua_settop_t lua_settop = (lua_settop_t)(base + OFFSET_LUA_SETTOP);
+                lua_newthread_t lua_newthread = (lua_newthread_t)(base + OFFSET_LUA_NEWTHREAD);
+                luaL_sandboxthread_t luaL_sandboxthread = (luaL_sandboxthread_t)(base + OFFSET_LUAL_SANDBOXTHREAD);
                 
-                SporkLog(@"Found fresh L: %p. Executing directly...", live_L);
+                SporkLog(@"Found strict L: %p. Creating coroutine...", live_L);
                 
                 in_hook_exec = 1;
                 int sig = sigsetjmp(hook_jump_buffer, 1);
                 
                 if (sig == 0) {
-                    // Save the game's current stack position
-                    int top = lua_gettop(live_L);
-                    
-                    const char *source = [script UTF8String];
-                    int status = luau_load(live_L, "SporkScript", source, strlen(source), 0);
-                    if (status == 0) {
-                        lua_pcall(live_L, 0, 0, 0);
-                        SporkLog(@"Success: LocalScript executed!");
+                    void* new_L = lua_newthread(live_L);
+                    if (new_L) {
+                        luaL_sandboxthread(new_L);
+
+                        const char *source = [script UTF8String];
+                        int status = luau_load(new_L, "SporkScript", source, strlen(source), 0);
+                        if (status == 0) {
+                            lua_pcall(new_L, 0, 0, 0);
+                            SporkLog(@"Success: LocalScript executed!");
+                        } else {
+                            SporkLog(@"Error: Compile/Load Failed with status %d", status);
+                        }
                     } else {
-                        SporkLog(@"Error: Compile/Load Failed with status %d", status);
+                        SporkLog(@"Error: Failed to create new thread.");
                     }
-                    
-                    // Restore the stack so the game's engine continues perfectly
-                    lua_settop(live_L, top);
-                    
                     in_hook_exec = 0;
                 } else {
                     in_hook_exec = 0;
                     SporkLog(@"HOOK CRASH CAUGHT: Signal %d. The app is safe.", sig);
                 }
             } else {
-                SporkLog(@"Error: Could not find a fresh live thread.");
+                SporkLog(@"Error: Could not find a strictly valid live thread.");
                 [g_scriptQueue removeAllObjects];
             }
         }
