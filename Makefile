@@ -6,9 +6,12 @@ include $(THEOS)/makefiles/common.mk
 
 TWEAK_NAME = Spork
 
-Spork_FILES = Tweak.xm SporkUI.mm
+# Find all Dobby C++ files recursively
+DOBBY_SRC = $(shell find Dobby -name '*.cc' -o -name '*.c')
 
-Spork_OBJCFLAGS = -fobjc-arc
-Spork_OBJCCFLAGS = -fobjc-arc
+Spork_FILES = Tweak.xm SporkUI.mm $(DOBBY_SRC)
+Spork_CCFLAGS = -std=c++11 -fno-exceptions -fno-rtti -I./Dobby/include
+Spork_OBJCFLAGS = -fobjc-arc -I./Dobby/include
+Spork_OBJCCFLAGS = -fobjc-arc -I./Dobby/include
 
 include $(THEOS_MAKE_PATH)/tweak.mk
