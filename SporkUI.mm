@@ -3,7 +3,7 @@
 extern void ExecuteLuauBytecode(const char* bytecode, size_t size);
 extern bool InjectExecutor(void);
 extern bool g_is_injected;
-extern int g_execution_method; // NEW: Global to store the selected method
+extern int g_execution_method; // Global to store the selected method
 
 // --- Custom Button for Squish Effect ---
 @interface SporkButton : UIButton
@@ -331,7 +331,6 @@ extern int g_execution_method; // NEW: Global to store the selected method
     [self.injectBtn addTarget:self action:@selector(injectExecutorAction) forControlEvents:UIControlEventTouchUpInside];
     [self.homeTabView addSubview:self.injectBtn];
 
-    // --- NEW: Method Selector ---
     self.methodLabel = [[UILabel alloc] init];
     self.methodLabel.translatesAutoresizingMaskIntoConstraints = NO;
     self.methodLabel.text = @"Current Test Method: 1 (Direct)";
@@ -450,6 +449,17 @@ extern int g_execution_method; // NEW: Global to store the selected method
     title.font = [UIFont boldSystemFontOfSize:16];
     [self.logsTabView addSubview:title];
     
+    // --- NEW: Copy Logs Button ---
+    SporkButton *copyBtn = [SporkButton buttonWithType:UIButtonTypeSystem];
+    copyBtn.translatesAutoresizingMaskIntoConstraints = NO;
+    [copyBtn setTitle:@"Copy Logs" forState:UIControlStateNormal];
+    [copyBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    copyBtn.titleLabel.font = [UIFont boldSystemFontOfSize:11];
+    copyBtn.backgroundColor = [UIColor colorWithRed:0.0 green:0.5 blue:1.0 alpha:1.0];
+    copyBtn.layer.cornerRadius = 6;
+    [copyBtn addTarget:self action:@selector(copyLogsAction) forControlEvents:UIControlEventTouchUpInside];
+    [self.logsTabView addSubview:copyBtn];
+    
     self.logsTextView = [[UITextView alloc] init];
     self.logsTextView.translatesAutoresizingMaskIntoConstraints = NO;
     self.logsTextView.backgroundColor = [UIColor colorWithRed:0.08 green:0.08 blue:0.08 alpha:1.0];
@@ -464,13 +474,32 @@ extern int g_execution_method; // NEW: Global to store the selected method
         [self.logsTabView.leadingAnchor constraintEqualToAnchor:self.contentContainer.leadingAnchor constant:15],
         [self.logsTabView.trailingAnchor constraintEqualToAnchor:self.contentContainer.trailingAnchor constant:-15],
         [self.logsTabView.bottomAnchor constraintEqualToAnchor:self.contentContainer.bottomAnchor constant:-15],
+        
         [title.topAnchor constraintEqualToAnchor:self.logsTabView.topAnchor constant:10],
         [title.leadingAnchor constraintEqualToAnchor:self.logsTabView.leadingAnchor constant:10],
+        
+        [copyBtn.centerYAnchor constraintEqualToAnchor:title.centerYAnchor],
+        [copyBtn.trailingAnchor constraintEqualToAnchor:self.logsTabView.trailingAnchor constant:-10],
+        [copyBtn.widthAnchor constraintEqualToConstant:80],
+        [copyBtn.heightAnchor constraintEqualToConstant:26],
+        
         [self.logsTextView.topAnchor constraintEqualToAnchor:title.bottomAnchor constant:10],
         [self.logsTextView.leadingAnchor constraintEqualToAnchor:self.logsTabView.leadingAnchor constant:10],
         [self.logsTextView.trailingAnchor constraintEqualToAnchor:self.logsTabView.trailingAnchor constant:-10],
         [self.logsTextView.bottomAnchor constraintEqualToAnchor:self.logsTabView.bottomAnchor]
     ]];
+}
+
+- (void)copyLogsAction {
+    if (self.logsTextView.text.length > 0) {
+        [UIPasteboard generalPasteboard].string = self.logsTextView.text;
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Spork" message:@"Logs copied to clipboard!" preferredStyle:UIAlertControllerStyleAlert];
+        [self presentViewController:alert animated:YES completion:^{
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                [alert dismissViewControllerAnimated:YES completion:nil];
+            });
+        }];
+    }
 }
 
 - (void)setupFloatingButton {
