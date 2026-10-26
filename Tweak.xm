@@ -15,8 +15,8 @@
 #define OFFSET_JOB_SCRIPT_CTX     0x1b0
 #define OFFSET_LUAU_LOAD          0x44bc110
 #define OFFSET_LUA_PCALL          0x4490fec
-#define OFFSET_LUA_NEWTHREAD      0x448df3c
-#define OFFSET_LUAL_SANDBOXTHREAD 0x1a12ad4
+#define OFFSET_LUA_GETTOP         0x448e048
+#define OFFSET_LUA_SETTOP         0x448e05c
 
 // --- Pass-Through Window ---
 @interface PassThroughWindow : UIWindow
@@ -44,8 +44,8 @@ static PassThroughWindow *overlayWindow = nil;
 // --- Executor Logic ---
 typedef int (*lua_pcall_t)(void* L, int nargs, int nresults, int errfunc);
 typedef int (*luau_load_t)(void* L, const char* chunkname, const char* data, size_t size, int env);
-typedef void* (*lua_newthread_t)(void* L);
-typedef void (*luaL_sandboxthread_t)(void* L);
+typedef int (*lua_gettop_t)(void* L);
+typedef void (*lua_settop_t)(void* L, int idx);
 
 bool g_is_injected = false;
 static NSMutableArray<NSString *> *g_scriptQueue = nil;
@@ -129,7 +129,7 @@ void* FindLuaState(void* base_ptr) {
                     if (safe_read((void*)(stripped_global + 0x1a0), &mainthread, 8)) {
                         uintptr_t stripped_mt = STRIP_PAC(mainthread);
                         if (stripped_mt > 0x100000000 && stripped_mt < 0x400000000) {
-                            return (void*)stripped_mt; // Return pure stripped pointer!
+                            return (void*)stripped_mt;
                         }
                     }
                 }
@@ -146,11 +146,9 @@ void my_job_step(void* job) {
         uintptr_t base = get_robloxlib_base();
         void* script_context = NULL;
         
-        // Read ScriptContext from the Job
         if (safe_read((char*)job + OFFSET_JOB_SCRIPT_CTX, &script_context, 8) && script_context) {
             script_context = (void*)STRIP_PAC(script_context);
             
-            // Rescan for a live mainthread right before execution
             void* live_L = FindLuaState(script_context);
             
             if (live_L) {
@@ -159,41 +157,39 @@ void my_job_step(void* job) {
                 
                 luau_load_t luau_load = (luau_load_t)(base + OFFSET_LUAU_LOAD);
                 lua_pcall_t lua_pcall = (lua_pcall_t)(base + OFFSET_LUA_PCALL);
-                lua_newthread_t lua_newthread = (lua_newthread_t)(base + OFFSET_LUA_NEWTHREAD);
-                luaL_sandboxthread_t luaL_sandboxthread = (luaL_sandboxthread_t)(base + OFFSET_LUAL_SANDBOXTHREAD);
+                lua_gettop_t lua_gettop = (lua_gettop_t)(base + OFFSET_LUA_GETTOP);
+                lua_settop_t lua_settop = (lua_settop_t)(base + OFFSET_LUA_SETTOP);
                 
-                SporkLog(@"Found fresh L: %p. Creating coroutine...", live_L);
+                SporkLog(@"Found fresh L: %p. Executing directly...", live_L);
                 
                 in_hook_exec = 1;
                 int sig = sigsetjmp(hook_jump_buffer, 1);
                 
                 if (sig == 0) {
-                    void* new_L = lua_newthread(live_L);
-                    if (new_L) {
-                        luaL_sandboxthread(new_L);
-
-                        const char *source = [script UTF8String];
-                        int status = luau_load(new_L, "SporkScript", source, strlen(source), 0);
-                        if (status == 0) {
-                            lua_pcall(new_L, 0, 0, 0);
-                            SporkLog(@"Success: Script executed!");
-                        } else {
-                            SporkLog(@"Error: Compile/Load Failed with status %d", status);
-                        }
+                    // Save the game's current stack position
+                    int top = lua_gettop(live_L);
+                    
+                    const char *source = [script UTF8String];
+                    int status = luau_load(live_L, "SporkScript", source, strlen(source), 0);
+                    if (status == 0) {
+                        lua_pcall(live_L, 0, 0, 0);
+                        SporkLog(@"Success: LocalScript executed!");
                     } else {
-                        SporkLog(@"Error: Failed to create new thread.");
+                        SporkLog(@"Error: Compile/Load Failed with status %d", status);
                     }
+                    
+                    // Restore the stack so the game's engine continues perfectly
+                    lua_settop(live_L, top);
+                    
                     in_hook_exec = 0;
                 } else {
                     in_hook_exec = 0;
                     SporkLog(@"HOOK CRASH CAUGHT: Signal %d. The app is safe.", sig);
                 }
             } else {
-                SporkLog(@"Error: Could not find a fresh live thread. GC may have moved it.");
+                SporkLog(@"Error: Could not find a fresh live thread.");
                 [g_scriptQueue removeAllObjects];
             }
-        } else {
-            SporkLog(@"Error: Could not read ScriptContext from Job.");
         }
     }
     
@@ -237,7 +233,6 @@ bool InjectExecutor(void) {
 
     void* target_job = NULL;
 
-    // Find the Job that has a ScriptContext
     for (uintptr_t ptr = start; ptr < end; ptr += 0x10) {
         void* j = NULL;
         if (!safe_read((void*)ptr, &j, 8) || !j) continue;
