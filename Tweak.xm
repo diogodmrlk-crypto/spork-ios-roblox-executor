@@ -9,10 +9,6 @@
 #import "SporkUI.h"
 
 // --- Offsets for Roblox 2.744.0.1077 (Relative to RobloxLib) ---
-#define OFFSET_TASKSCHEDULER      0x6a6d7c0
-#define OFFSET_TS_JOBS_START      0xd0
-#define OFFSET_TS_JOBS_END        0xd8
-#define OFFSET_JOB_SCRIPT_CTX     0x1b0
 #define OFFSET_LUA_PCALL          0x4490fec
 #define OFFSET_LUAU_LOAD          0x44bc110
 
@@ -43,22 +39,11 @@ static PassThroughWindow *overlayWindow = nil;
 typedef int (*lua_pcall_t)(void* L, int nargs, int nresults, int errfunc);
 typedef int (*luau_load_t)(void* L, const char* chunkname, const char* data, size_t size, int env);
 
-static void* g_L = NULL;
 bool g_is_injected = false;
 static NSMutableArray<NSString *> *g_scriptQueue = nil;
 
 // Hook Trampoline
 static lua_pcall_t orig_lua_pcall = NULL;
-
-// --- Crash-Proof Signal Handler ---
-static sigjmp_buf jump_buffer;
-static volatile sig_atomic_t in_lua_exec = 0;
-
-void signal_handler(int sig) {
-    if (in_lua_exec) {
-        siglongjmp(jump_buffer, sig);
-    }
-}
 
 // --- Logging System ---
 NSMutableArray<NSString *> *g_logs = nil;
@@ -80,17 +65,6 @@ void SporkLog(NSString *format, ...) {
     dispatch_async(dispatch_get_main_queue(), ^{
         [[NSNotificationCenter defaultCenter] postNotificationName:@"SporkLogUpdated" object:nil];
     });
-}
-
-#define STRIP_PAC(ptr) ((uintptr_t)(ptr) & 0x0000000FFFFFFFFF)
-
-bool safe_read(void* address, void* buffer, size_t size) {
-    uintptr_t addr = STRIP_PAC(address);
-    if (addr < 0x100000000 || addr > 0x7FFFFFFFFFFF) return false;
-    
-    vm_size_t out_size;
-    kern_return_t kr = vm_read_overwrite(mach_task_self(), (vm_address_t)addr, (vm_size_t)size, (vm_address_t)buffer, &out_size);
-    return (kr == KERN_SUCCESS && out_size == size);
 }
 
 uintptr_t get_robloxlib_base(void) {
@@ -157,41 +131,6 @@ int my_lua_pcall(void* L, int nargs, int nresults, int errfunc) {
     return orig_lua_pcall(L, nargs, nresults, errfunc);
 }
 
-// Strict validation to prevent false positives
-void* FindLuaState(void* base_ptr) {
-    if (!base_ptr) return NULL;
-    uintptr_t base = STRIP_PAC(base_ptr);
-    
-    for (int i = 0; i < 0x200000; i += 8) {
-        void* ptr = NULL;
-        if (!safe_read((void*)(base + i), &ptr, 8)) continue;
-        
-        uintptr_t stripped_ptr = STRIP_PAC(ptr);
-        if (stripped_ptr > 0x100000000 && stripped_ptr < 0x7FFFFFFFFFFF) {
-            uint8_t tt = 0;
-            if (!safe_read((void*)(stripped_ptr + 0x2), &tt, 1) || tt != 9) continue;
-            
-            void* global_ptr = NULL;
-            if (!safe_read((void*)(stripped_ptr + 0x78), &global_ptr, 8)) continue;
-            
-            uintptr_t stripped_global = STRIP_PAC(global_ptr);
-            if (stripped_global < 0x100000000 || stripped_global > 0x7FFFFFFFFFFF) continue;
-            
-            void* mainthread = NULL;
-            if (!safe_read((void*)(stripped_global + 0x1a0), &mainthread, 8)) continue;
-            
-            if (STRIP_PAC(mainthread) == stripped_ptr) {
-                void* base_ci = NULL;
-                if (!safe_read((void*)(stripped_ptr + 0x18), &base_ci, 8)) continue;
-                if (STRIP_PAC(base_ci) < 0x100000000) continue;
-                
-                return mainthread;
-            }
-        }
-    }
-    return NULL;
-}
-
 bool InjectExecutor(void) {
     if (g_logs) [g_logs removeAllObjects];
     SporkLog(@"Starting Injection...");
@@ -201,54 +140,12 @@ bool InjectExecutor(void) {
         SporkLog(@"Error: Failed to find RobloxLib base.");
         return false;
     }
-    
-    void* task_scheduler = NULL;
-    if (!safe_read((void*)(base + OFFSET_TASKSCHEDULER), &task_scheduler, 8) || !task_scheduler) {
-        SporkLog(@"Error: Failed to find TaskScheduler.");
-        return false;
-    }
-    task_scheduler = (void*)STRIP_PAC(task_scheduler);
-    
-    uintptr_t start = 0, end = 0;
-    safe_read((char*)task_scheduler + OFFSET_TS_JOBS_START, &start, 8);
-    safe_read((char*)task_scheduler + OFFSET_TS_JOBS_END, &end, 8);
-    start = STRIP_PAC(start);
-    end = STRIP_PAC(end);
-
-    for (uintptr_t ptr = start; ptr < end; ptr += 0x10) {
-        void* j = NULL;
-        if (!safe_read((void*)ptr, &j, 8) || !j) continue;
-        
-        uintptr_t stripped_j = STRIP_PAC(j);
-        
-        void* script_context = NULL;
-        if (safe_read((char*)stripped_j + OFFSET_JOB_SCRIPT_CTX, &script_context, 8) && script_context) {
-            script_context = (void*)STRIP_PAC(script_context);
-            
-            g_L = FindLuaState(script_context);
-            if (g_L) {
-                SporkLog(@"Success: Found mainthread in ScriptContext: %p", g_L);
-                break;
-            }
-            
-            g_L = FindLuaState((void*)stripped_j);
-            if (g_L) {
-                SporkLog(@"Success: Found mainthread in Job: %p", g_L);
-                break;
-            }
-        }
-    }
-    
-    if (!g_L) {
-        SporkLog(@"Error: Could not find a valid lua_State.");
-        return false;
-    }
 
     // Install the inline hook for lua_pcall
     void* target_pcall = (void*)(base + OFFSET_LUA_PCALL);
     install_hook(target_pcall, (void*)my_lua_pcall);
     
-    SporkLog(@"Success: Hooked lua_pcall!");
+    SporkLog(@"Success: Hooked lua_pcall! Waiting for engine tick...");
     g_is_injected = true;
     return true;
 }
@@ -264,9 +161,6 @@ void ExecuteLuauSource(const char* source, size_t size) {
 
 __attribute__((constructor))
 static void init() {
-    signal(SIGSEGV, signal_handler);
-    signal(SIGBUS, signal_handler);
-
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         if (overlayWindow) return; 
 
