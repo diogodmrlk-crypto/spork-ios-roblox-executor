@@ -47,7 +47,6 @@ typedef int (*luau_load_t)(void* L, const char* chunkname, const char* data, siz
 typedef void* (*lua_newthread_t)(void* L);
 typedef void (*luaL_sandboxthread_t)(void* L);
 
-static void* g_L = NULL;
 bool g_is_injected = false;
 static NSMutableArray<NSString *> *g_scriptQueue = nil;
 
@@ -142,54 +141,62 @@ void* FindLuaState(void* base_ptr) {
 
 // --- VTable Hook for Job::step ---
 void my_job_step(void* job) {
-    if (g_scriptQueue && g_scriptQueue.count > 0 && g_L) {
-        
-        // Ensure g_L is still valid memory before creating a thread
-        uint8_t tt = 0;
-        if (!safe_read((void*)((char*)g_L + 0x2), &tt, 1) || tt != 9) {
-            SporkLog(@"Error: g_L is invalid before execution.");
-            [g_scriptQueue removeAllObjects];
-            goto call_original;
-        }
-
-        NSString *script = g_scriptQueue.firstObject;
-        [g_scriptQueue removeObjectAtIndex:0];
+    if (g_scriptQueue && g_scriptQueue.count > 0) {
         
         uintptr_t base = get_robloxlib_base();
-        luau_load_t luau_load = (luau_load_t)(base + OFFSET_LUAU_LOAD);
-        lua_pcall_t lua_pcall = (lua_pcall_t)(base + OFFSET_LUA_PCALL);
-        lua_newthread_t lua_newthread = (lua_newthread_t)(base + OFFSET_LUA_NEWTHREAD);
-        luaL_sandboxthread_t luaL_sandboxthread = (luaL_sandboxthread_t)(base + OFFSET_LUAL_SANDBOXTHREAD);
+        void* script_context = NULL;
         
-        SporkLog(@"Job::step hooked! Creating coroutine...");
-        
-        in_hook_exec = 1;
-        int sig = sigsetjmp(hook_jump_buffer, 1);
-        
-        if (sig == 0) {
-            void* new_L = lua_newthread(g_L);
-            if (new_L) {
-                luaL_sandboxthread(new_L);
+        // Read ScriptContext from the Job
+        if (safe_read((char*)job + OFFSET_JOB_SCRIPT_CTX, &script_context, 8) && script_context) {
+            script_context = (void*)STRIP_PAC(script_context);
+            
+            // Rescan for a live mainthread right before execution
+            void* live_L = FindLuaState(script_context);
+            
+            if (live_L) {
+                NSString *script = g_scriptQueue.firstObject;
+                [g_scriptQueue removeObjectAtIndex:0];
+                
+                luau_load_t luau_load = (luau_load_t)(base + OFFSET_LUAU_LOAD);
+                lua_pcall_t lua_pcall = (lua_pcall_t)(base + OFFSET_LUA_PCALL);
+                lua_newthread_t lua_newthread = (lua_newthread_t)(base + OFFSET_LUA_NEWTHREAD);
+                luaL_sandboxthread_t luaL_sandboxthread = (luaL_sandboxthread_t)(base + OFFSET_LUAL_SANDBOXTHREAD);
+                
+                SporkLog(@"Found fresh L: %p. Creating coroutine...", live_L);
+                
+                in_hook_exec = 1;
+                int sig = sigsetjmp(hook_jump_buffer, 1);
+                
+                if (sig == 0) {
+                    void* new_L = lua_newthread(live_L);
+                    if (new_L) {
+                        luaL_sandboxthread(new_L);
 
-                const char *source = [script UTF8String];
-                int status = luau_load(new_L, "SporkScript", source, strlen(source), 0);
-                if (status == 0) {
-                    lua_pcall(new_L, 0, 0, 0);
-                    SporkLog(@"Success: Script executed!");
+                        const char *source = [script UTF8String];
+                        int status = luau_load(new_L, "SporkScript", source, strlen(source), 0);
+                        if (status == 0) {
+                            lua_pcall(new_L, 0, 0, 0);
+                            SporkLog(@"Success: Script executed!");
+                        } else {
+                            SporkLog(@"Error: Compile/Load Failed with status %d", status);
+                        }
+                    } else {
+                        SporkLog(@"Error: Failed to create new thread.");
+                    }
+                    in_hook_exec = 0;
                 } else {
-                    SporkLog(@"Error: Compile/Load Failed with status %d", status);
+                    in_hook_exec = 0;
+                    SporkLog(@"HOOK CRASH CAUGHT: Signal %d. The app is safe.", sig);
                 }
             } else {
-                SporkLog(@"Error: Failed to create new thread.");
+                SporkLog(@"Error: Could not find a fresh live thread. GC may have moved it.");
+                [g_scriptQueue removeAllObjects];
             }
-            in_hook_exec = 0;
         } else {
-            in_hook_exec = 0;
-            SporkLog(@"HOOK CRASH CAUGHT: Signal %d. The app is safe.", sig);
+            SporkLog(@"Error: Could not read ScriptContext from Job.");
         }
     }
     
-call_original:
     // Call the original step function
     if (orig_job_step) {
         ((void(*)(void*))orig_job_step)(job);
@@ -200,7 +207,6 @@ bool InjectExecutor(void) {
     if (g_logs) [g_logs removeAllObjects];
     SporkLog(@"Starting Injection...");
     
-    // Register the hook's local signal handler
     signal(SIGSEGV, hook_signal_handler);
     signal(SIGBUS, hook_signal_handler);
     
@@ -231,6 +237,7 @@ bool InjectExecutor(void) {
 
     void* target_job = NULL;
 
+    // Find the Job that has a ScriptContext
     for (uintptr_t ptr = start; ptr < end; ptr += 0x10) {
         void* j = NULL;
         if (!safe_read((void*)ptr, &j, 8) || !j) continue;
@@ -239,26 +246,14 @@ bool InjectExecutor(void) {
         
         void* script_context = NULL;
         if (safe_read((char*)stripped_j + OFFSET_JOB_SCRIPT_CTX, &script_context, 8) && script_context) {
-            script_context = (void*)STRIP_PAC(script_context);
-            
-            g_L = FindLuaState(script_context);
-            if (g_L) {
-                target_job = j;
-                SporkLog(@"Success: Found mainthread in ScriptContext: %p", g_L);
-                break;
-            }
-            
-            g_L = FindLuaState((void*)stripped_j);
-            if (g_L) {
-                target_job = j;
-                SporkLog(@"Success: Found mainthread in Job: %p", g_L);
-                break;
-            }
+            target_job = j;
+            SporkLog(@"Success: Found Job with ScriptContext: %p", j);
+            break;
         }
     }
     
-    if (!g_L || !target_job) {
-        SporkLog(@"Error: Could not find a valid lua_State or Job.");
+    if (!target_job) {
+        SporkLog(@"Error: Could not find a valid Job.");
         return false;
     }
 
