@@ -8,8 +8,8 @@
 #import <libkern/OSCacheControl.h>
 #import "SporkUI.h"
 
-// Forward declare mach_vm_remap because Apple hides it in newer SDKs
-extern kern_return_t mach_vm_remap(vm_map_t target_task, uint64_t *target_address, uint64_t size, uint64_t mask, int flags, vm_map_t src_task, uint64_t src_address, boolean_t copy, vm_prot_t *cur_protection, vm_prot_t *max_protection, vm_inherit_t inheritance);
+// Forward declare mach_vm_remap with extern "C" to fix the linker error
+extern "C" kern_return_t mach_vm_remap(vm_map_t target_task, uint64_t *target_address, uint64_t size, uint64_t mask, int flags, vm_map_t src_task, uint64_t src_address, boolean_t copy, vm_prot_t *cur_protection, vm_prot_t *max_protection, vm_inherit_t inheritance);
 
 // --- Offsets for Roblox 2.744.0.1077 (Relative to RobloxLib) ---
 #define OFFSET_LUA_PCALL          0x4490fec
