@@ -9,7 +9,7 @@ jobs:
 
       - name: Clone Dobby Library
         run: |
-          git clone --depth 1 https://github.com/jmpews/Dobby.git Dobby
+          git clone --recursive https://github.com/jmpews/Dobby.git Dobby
 
       - name: Setup Theos
         run: |
