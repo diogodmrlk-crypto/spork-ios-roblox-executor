@@ -460,7 +460,8 @@ extern bool g_is_injected;
     btn.backgroundColor = [UIColor clearColor]; 
     btn.layer.borderWidth = 0;
     UIImageSymbolConfiguration *config = [UIImageSymbolConfiguration configurationWithPointSize:30 weight:UIImageSymbolWeightBold];
-    [btn setImage:[UIImage imageNamed:@"hare.fill" withConfiguration:config] forState:UIControlStateNormal];
+    // FIXED: Changed imageNamed: to systemImageNamed:
+    [btn setImage:[UIImage systemImageNamed:@"hare.fill" withConfiguration:config] forState:UIControlStateNormal];
     [btn setTintColor:[UIColor whiteColor]];
     btn.hidden = YES;
     [self.view addSubview:btn];
