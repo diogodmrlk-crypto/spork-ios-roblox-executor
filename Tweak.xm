@@ -65,7 +65,7 @@ void SporkLog(NSString *format, ...) {
     });
 }
 
-#define STRIP_PAC(ptr) ((uintptr_t)(ptr) & 0x0000000FFFFFFFFF)
+#define STRIP_PAC(ptr) ((uintptr_t)(ptr) & 0x000000FFFFFFFFFF) // Mask top 8 bits safely
 
 bool safe_read(void* address, void* buffer, size_t size) {
     uintptr_t addr = STRIP_PAC(address);
@@ -87,29 +87,39 @@ uintptr_t get_robloxlib_base(void) {
     return 0;
 }
 
-// Bulletproof lua_State finder using a circular reference check
+// Robust lua_State finder that checks stack, stacksize, and totalbytes
 void* FindLuaState(void* base_ptr) {
     if (!base_ptr) return NULL;
     uintptr_t base = STRIP_PAC(base_ptr);
     
-    for (int i = 0; i < 0x100000; i += 8) { // Scan 1MB
+    for (int i = 0; i < 0x200000; i += 8) { // Scan 2MB
         void* ptr = NULL;
         if (!safe_read((void*)(base + i), &ptr, 8)) continue;
         
         uintptr_t stripped_ptr = STRIP_PAC(ptr);
         if (stripped_ptr > 0x100000000 && stripped_ptr < 0x8000000000) {
-            void* global_ptr = NULL;
-            if (safe_read((void*)(stripped_ptr + 0x78), &global_ptr, 8)) {
+            uint8_t tt = 0;
+            if (!safe_read((void*)(stripped_ptr + 0x2), &tt, 1)) continue;
+            
+            if (tt == 9) { // LUA_TTHREAD
+                void* global_ptr = NULL;
+                if (!safe_read((void*)(stripped_ptr + 0x78), &global_ptr, 8)) continue;
+                
                 uintptr_t stripped_global = STRIP_PAC(global_ptr);
                 if (stripped_global > 0x100000000 && stripped_global < 0x8000000000) {
-                    void* mainthread = NULL;
-                    if (safe_read((void*)(stripped_global + 0x1a0), &mainthread, 8)) {
-                        if (STRIP_PAC(mainthread) == stripped_ptr) {
-                            uint8_t tt;
-                            if (safe_read((void*)(stripped_ptr + 0x2), &tt, 1) && tt == 9) {
-                                return (void*)stripped_ptr;
-                            }
-                        }
+                    size_t totalbytes = 0;
+                    if (!safe_read((void*)(stripped_global + 0x50), &totalbytes, 8)) continue;
+                    
+                    void* stack_ptr = NULL;
+                    if (!safe_read((void*)(stripped_ptr + 0x60), &stack_ptr, 8)) continue;
+                    
+                    int stacksize = 0;
+                    if (!safe_read((void*)(stripped_ptr + 0x80), &stacksize, 4)) continue;
+                    
+                    if (totalbytes > 0 && totalbytes < 0x80000000 &&
+                        STRIP_PAC(stack_ptr) > 0x100000000 &&
+                        stacksize > 0 && stacksize < 1000000) {
+                        return (void*)stripped_ptr;
                     }
                 }
             }
@@ -155,6 +165,13 @@ bool InjectExecutor(void) {
         uintptr_t stripped_j = STRIP_PAC(j);
         jobCount++;
         
+        // Try to read the job name for logging (std::string data pointer is at 0x28)
+        char jobName[64] = {0};
+        void* str_ptr = NULL;
+        if (safe_read((void*)(stripped_j + 0x28), &str_ptr, 8) && str_ptr) {
+            safe_read((void*)STRIP_PAC(str_ptr), jobName, 63);
+        }
+        
         void* script_context = NULL;
         if (safe_read((char*)stripped_j + OFFSET_JOB_SCRIPT_CTX, &script_context, 8) && script_context) {
             script_context = (void*)STRIP_PAC(script_context);
@@ -162,7 +179,7 @@ bool InjectExecutor(void) {
             // Strategy 1: Scan ScriptContext
             g_L = FindLuaState(script_context);
             if (g_L) {
-                SporkLog(@"Success: Found lua_State in ScriptContext: %p", g_L);
+                SporkLog(@"Success: Found lua_State in ScriptContext of Job [%s]: %p", jobName, g_L);
                 g_is_injected = true;
                 return true;
             }
@@ -170,21 +187,9 @@ bool InjectExecutor(void) {
             // Strategy 2: Scan Job
             g_L = FindLuaState((void*)stripped_j);
             if (g_L) {
-                SporkLog(@"Success: Found lua_State in Job: %p", g_L);
+                SporkLog(@"Success: Found lua_State in Job [%s]: %p", jobName, g_L);
                 g_is_injected = true;
                 return true;
-            }
-            
-            // Strategy 3: Check DataModel (ScriptContext + 0x60)
-            void* data_model = NULL;
-            if (safe_read((char*)script_context + 0x60, &data_model, 8) && data_model) {
-                data_model = (void*)STRIP_PAC(data_model);
-                g_L = FindLuaState(data_model);
-                if (g_L) {
-                    SporkLog(@"Success: Found lua_State in DataModel: %p", g_L);
-                    g_is_injected = true;
-                    return true;
-                }
             }
         }
     }
