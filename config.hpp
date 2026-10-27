@@ -10,14 +10,12 @@
 #define OFFSET_LUA_NEWTHREAD      0x448df3c
 #define OFFSET_LUAL_SANDBOXTHREAD 0x1a12ad4
 
-#define OFFSET_TASKSCHEDULER      0x6a6d7c0
-#define OFFSET_TS_JOBS_START      0xd0
-#define OFFSET_TS_JOBS_END        0xd8
-#define OFFSET_JOB_SCRIPT_CTX     0x1b0
-#define OFFSET_GET_GLOBAL_STATE   0x19ce768
-#define OFFSET_MAINTHREAD         0x1a0
+// Safe function to get ScriptContext (Not a fallback)
+#define OFFSET_GET_SCRIPTCONTEXT  0x19cc48c
 
 // Structures
+#define OFFSET_PARENT             0x60
+#define OFFSET_MAINTHREAD         0x1a0
 #define OFFSET_LUA_STATE_GLOBAL   0x78
 #define OFFSET_LUA_STATE_TT       0x2
 
