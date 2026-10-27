@@ -7,44 +7,8 @@ extern void SporkLog(NSString *format, ...);
 
 void* g_live_L = NULL;
 
-bool is_global_state(uintptr_t ptr) {
-    if (ptr < 0x100000000 || ptr > 0x7FFFFFFFFFFF) return false;
-    uintptr_t mt = 0;
-    if (!safe_read((void*)(ptr + OFFSET_MAINTHREAD), &mt, 8)) return false;
-    if (mt < 0x100000000 || mt > 0x7FFFFFFFFFFF) return false;
-    uintptr_t gs_back = 0;
-    if (!safe_read((void*)(mt + OFFSET_LUA_STATE_GLOBAL), &gs_back, 8)) return false;
-    return gs_back == ptr;
-}
-
-void* find_global_state(void* script_context) {
-    uintptr_t base = (uintptr_t)script_context;
-    for (int i = 0; i < 0x4000; i += 8) {
-        uintptr_t ptr = 0;
-        if (safe_read((void*)(base + i), &ptr, 8)) {
-            if (is_global_state(ptr)) {
-                SporkLog(@"Found global_state in SC at +0x%X", i);
-                return (void*)ptr;
-            }
-        }
-    }
-    
-    void* parent = NULL;
-    if (safe_read((char*)script_context + OFFSET_PARENT, &parent, 8) && parent) {
-        SporkLog(@"Scanning parent DataModel: %p", parent);
-        uintptr_t dm_base = (uintptr_t)parent;
-        for (int i = 0; i < 0x4000; i += 8) {
-            uintptr_t ptr = 0;
-            if (safe_read((void*)(dm_base + i), &ptr, 8)) {
-                if (is_global_state(ptr)) {
-                    SporkLog(@"Found global_state in DM at +0x%X", i);
-                    return (void*)ptr;
-                }
-            }
-        }
-    }
-    return NULL;
-}
+// Based on your IDA dump, the function takes 3 arguments and returns lua_State*
+typedef void* (*get_global_state_t)(void* sc, int* identity, void** script);
 
 void SetupHooks(void) {
     SporkLog(@"SetupHooks started...");
@@ -76,15 +40,22 @@ void SetupHooks(void) {
     if (!script_context) { SporkLog(@"No SC found"); return; }
     SporkLog(@"Found SC: %p", script_context);
 
-    void* global_state = find_global_state(script_context);
-    if (global_state) {
-        safe_read((char*)global_state + OFFSET_MAINTHREAD, &g_live_L, 8);
-        if (g_live_L) {
-            SporkLog(@"SUCCESS! lua_State: %p", g_live_L);
-        } else {
-            SporkLog(@"Mainthread null");
-        }
+    // Call get_global_state using the exact IDA instructions
+    get_global_state_t get_global_state = (get_global_state_t)(base + OFFSET_GET_GLOBAL_STATE);
+    
+    // Dummy variables for the function to fill out
+    int identity = 0;
+    void* script = NULL;
+    
+    SporkLog(@"Calling get_global_state(SC, &identity, &script)...");
+    
+    // Call with 3 arguments!
+    void* live_L = get_global_state(script_context, &identity, &script);
+    
+    if (live_L) {
+        g_live_L = live_L;
+        SporkLog(@"SUCCESS! lua_State: %p", g_live_L);
     } else {
-        SporkLog(@"Could not find global_state.");
+        SporkLog(@"get_global_state returned NULL");
     }
 }
