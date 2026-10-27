@@ -1,8 +1,8 @@
 #import "SporkUI.h"
 #import "exploit.hpp"
+#import "hooks.hpp"
 
-extern bool g_is_injected;
-extern int g_execution_method;
+extern void* g_live_L;
 
 // --- Custom Button for Squish Effect ---
 @interface SporkButton : UIButton
@@ -322,12 +322,12 @@ extern int g_execution_method;
     
     self.injectBtn = [SporkButton buttonWithType:UIButtonTypeSystem];
     self.injectBtn.translatesAutoresizingMaskIntoConstraints = NO;
-    [self.injectBtn setTitle:@"Hooked" forState:UIControlStateNormal];
+    [self.injectBtn setTitle:@"Inject Executor" forState:UIControlStateNormal];
     [self.injectBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    self.injectBtn.backgroundColor = [UIColor darkGrayColor];
+    self.injectBtn.backgroundColor = [UIColor colorWithRed:0.0 green:0.5 blue:1.0 alpha:1.0];
     self.injectBtn.layer.cornerRadius = 8;
     self.injectBtn.titleLabel.font = [UIFont boldSystemFontOfSize:14];
-    self.injectBtn.enabled = NO;
+    [self.injectBtn addTarget:self action:@selector(injectExecutorAction) forControlEvents:UIControlEventTouchUpInside];
     [self.homeTabView addSubview:self.injectBtn];
 
     self.methodLabel = [[UILabel alloc] init];
@@ -538,12 +538,24 @@ extern int g_execution_method;
 }
 
 - (void)injectExecutorAction {
-    // Hooks are already running from launch!
-    self.statusLabel.text = @"Ready to Execute!";
-    self.statusLabel.textColor = [UIColor greenColor];
-    self.injectBtn.backgroundColor = [UIColor darkGrayColor];
-    [self.injectBtn setTitle:@"Hooked" forState:UIControlStateNormal];
-    self.injectBtn.enabled = NO;
+    self.statusLabel.text = @"Injecting... (see logs)";
+    self.statusLabel.textColor = [UIColor yellowColor];
+    
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        SetupHooks();
+        
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (g_live_L) {
+                self.statusLabel.text = @"Success! Injected.";
+                self.statusLabel.textColor = [UIColor greenColor];
+                [self.injectBtn setTitle:@"Injected" forState:UIControlStateNormal];
+                self.injectBtn.enabled = NO;
+            } else {
+                self.statusLabel.text = @"Failed (check logs)";
+                self.statusLabel.textColor = [UIColor redColor];
+            }
+        });
+    });
 }
 
 - (void)executeInfiniteYield {
