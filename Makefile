@@ -8,5 +8,6 @@ TWEAK_NAME = Spork
 Spork_FILES = Tweak.xm SporkUI.mm
 Spork_OBJCFLAGS = -fobjc-arc
 Spork_OBJCCFLAGS = -fobjc-arc
+Spork_LIBRARIES = substrate
 
 include $(THEOS_MAKE_PATH)/tweak.mk
