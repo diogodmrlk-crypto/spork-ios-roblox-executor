@@ -1,12 +1,9 @@
 #import <UIKit/UIKit.h>
 #import "SporkUI.h"
-#import "hooks.hpp"
 
-// Defined here so SporkUI.mm can link to them
 bool g_is_injected = true;
 int g_execution_method = 1;
 
-// UI Passing Window
 @interface PassThroughWindow : UIWindow
 @property (nonatomic, weak) UIView *interactableView1;
 @property (nonatomic, weak) UIView *interactableView2;
@@ -28,8 +25,6 @@ int g_execution_method = 1;
 @end
 
 static PassThroughWindow *overlayWindow = nil;
-
-// Logging
 NSMutableArray<NSString *> *g_logs = nil;
 
 void SporkLog(NSString *format, ...) {
@@ -51,10 +46,9 @@ void SporkLog(NSString *format, ...) {
     });
 }
 
-// Entry Point
 __attribute__((constructor))
 static void init() {
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(4.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         if (overlayWindow) return; 
 
         UIWindowScene *activeScene = nil;
@@ -82,10 +76,5 @@ static void init() {
         
         overlayWindow.interactableView1 = vc.mainContainer;
         overlayWindow.interactableView2 = vc.floatingButton;
-        
-        // Run the hook setup on a background thread to prevent deadlocks
-        dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-            SetupHooks();
-        });
     });
 }
