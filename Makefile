@@ -6,7 +6,6 @@ include $(THEOS)/makefiles/common.mk
 
 TWEAK_NAME = Spork
 
-# Updated hooks.mm and exploit.mm
 Spork_FILES = Tweak.xm SporkUI.mm memory.cpp hooks.mm exploit.mm
 
 Spork_OBJCFLAGS = -fobjc-arc -I. -I./src
