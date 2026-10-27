@@ -1,9 +1,8 @@
 #import "SporkUI.h"
+#import "exploit.hpp"
 
-extern void ExecuteLuauBytecode(const char* bytecode, size_t size);
-extern bool InjectExecutor(void);
 extern bool g_is_injected;
-extern int g_execution_method; // Global to store the selected method
+extern int g_execution_method;
 
 // --- Custom Button for Squish Effect ---
 @interface SporkButton : UIButton
@@ -53,7 +52,7 @@ extern int g_execution_method; // Global to store the selected method
     [super viewDidLoad];
     self.view.backgroundColor = [UIColor clearColor];
     self.tabCounter = 1;
-    g_execution_method = 1; // Default to Method 1
+    g_execution_method = 1; 
     [self setupMainContainer];
     [self setupTopBar];
     [self setupSidebar];
@@ -323,12 +322,12 @@ extern int g_execution_method; // Global to store the selected method
     
     self.injectBtn = [SporkButton buttonWithType:UIButtonTypeSystem];
     self.injectBtn.translatesAutoresizingMaskIntoConstraints = NO;
-    [self.injectBtn setTitle:@"Inject Executor" forState:UIControlStateNormal];
+    [self.injectBtn setTitle:@"Hooked" forState:UIControlStateNormal];
     [self.injectBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    self.injectBtn.backgroundColor = [UIColor colorWithRed:0.0 green:0.5 blue:1.0 alpha:1.0];
+    self.injectBtn.backgroundColor = [UIColor darkGrayColor];
     self.injectBtn.layer.cornerRadius = 8;
     self.injectBtn.titleLabel.font = [UIFont boldSystemFontOfSize:14];
-    [self.injectBtn addTarget:self action:@selector(injectExecutorAction) forControlEvents:UIControlEventTouchUpInside];
+    self.injectBtn.enabled = NO;
     [self.homeTabView addSubview:self.injectBtn];
 
     self.methodLabel = [[UILabel alloc] init];
@@ -449,7 +448,6 @@ extern int g_execution_method; // Global to store the selected method
     title.font = [UIFont boldSystemFontOfSize:16];
     [self.logsTabView addSubview:title];
     
-    // --- NEW: Copy Logs Button ---
     SporkButton *copyBtn = [SporkButton buttonWithType:UIButtonTypeSystem];
     copyBtn.translatesAutoresizingMaskIntoConstraints = NO;
     [copyBtn setTitle:@"Copy Logs" forState:UIControlStateNormal];
@@ -540,20 +538,15 @@ extern int g_execution_method; // Global to store the selected method
 }
 
 - (void)injectExecutorAction {
-    if (InjectExecutor()) {
-        self.statusLabel.text = @"Injected Successfully!";
-        self.statusLabel.textColor = [UIColor greenColor];
-        self.injectBtn.backgroundColor = [UIColor darkGrayColor];
-        [self.injectBtn setTitle:@"Injected" forState:UIControlStateNormal];
-        self.injectBtn.enabled = NO;
-    } else {
-        self.statusLabel.text = @"Injection Failed (Check Logs tab!)";
-        self.statusLabel.textColor = [UIColor redColor];
-    }
+    // Hooks are already running from launch!
+    self.statusLabel.text = @"Ready to Execute!";
+    self.statusLabel.textColor = [UIColor greenColor];
+    self.injectBtn.backgroundColor = [UIColor darkGrayColor];
+    [self.injectBtn setTitle:@"Hooked" forState:UIControlStateNormal];
+    self.injectBtn.enabled = NO;
 }
 
 - (void)executeInfiniteYield {
-    if (!g_is_injected) return;
     const char* iy_source = "print('Infinite Yield Loaded!')";
     ExecuteLuauBytecode(iy_source, strlen(iy_source));
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Spork" message:@"Infinite Yield script queued!" preferredStyle:UIAlertControllerStyleAlert];
@@ -562,7 +555,6 @@ extern int g_execution_method; // Global to store the selected method
 }
 
 - (void)executeScriptAction {
-    if (!g_is_injected) return;
     NSString *sourceCode = self.scriptEditor.text;
     const char *cString = [sourceCode UTF8String];
     ExecuteLuauBytecode(cString, strlen(cString));
