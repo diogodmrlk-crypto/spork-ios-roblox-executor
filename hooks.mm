@@ -7,7 +7,41 @@ extern void SporkLog(NSString *format, ...);
 
 void* g_live_L = NULL;
 
-typedef void* (*get_global_state_t)(void* sc);
+typedef void* (*get_scriptcontext_t)();
+
+// Helper to verify if a pointer is a global_State
+bool is_global_state(uintptr_t ptr) {
+    if (ptr < 0x100000000 || ptr > 0x7FFFFFFFFFFF) return false;
+    uintptr_t mt = 0;
+    if (!safe_read((void*)(ptr + OFFSET_MAINTHREAD), &mt, 8)) return false;
+    if (mt < 0x100000000 || mt > 0x7FFFFFFFFFFF) return false;
+    uintptr_t gs_back = 0;
+    if (!safe_read((void*)(mt + OFFSET_LUA_STATE_GLOBAL), &gs_back, 8)) return false;
+    return gs_back == ptr;
+}
+
+void* find_global_state(void* script_context) {
+    uintptr_t base = (uintptr_t)script_context;
+    // Scan ScriptContext
+    for (int i = 0; i < 0x2000; i += 8) {
+        uintptr_t ptr = 0;
+        if (safe_read((void*)(base + i), &ptr, 8)) {
+            if (is_global_state(ptr)) return (void*)ptr;
+        }
+    }
+    // Scan DataModel (parent of ScriptContext)
+    void* data_model = NULL;
+    if (safe_read((char*)script_context + OFFSET_PARENT, &data_model, 8) && data_model) {
+        uintptr_t dm_base = (uintptr_t)data_model;
+        for (int i = 0; i < 0x2000; i += 8) {
+            uintptr_t ptr = 0;
+            if (safe_read((void*)(dm_base + i), &ptr, 8)) {
+                if (is_global_state(ptr)) return (void*)ptr;
+            }
+        }
+    }
+    return NULL;
+}
 
 void SetupHooks(void) {
     uintptr_t base = get_robloxlib_base();
@@ -16,43 +50,18 @@ void SetupHooks(void) {
         return;
     }
 
-    void* task_scheduler = NULL;
-    if (!safe_read((void*)(base + OFFSET_TASKSCHEDULER), &task_scheduler, 8) || !task_scheduler) {
-        SporkLog(@"Error: TaskScheduler not found.");
-        return;
-    }
-    task_scheduler = (void*)STRIP_PAC(task_scheduler);
-
-    uintptr_t start = 0, end = 0;
-    safe_read((char*)task_scheduler + OFFSET_TS_JOBS_START, &start, 8);
-    safe_read((char*)task_scheduler + OFFSET_TS_JOBS_END, &end, 8);
-    start = STRIP_PAC(start);
-    end = STRIP_PAC(end);
-
-    if (!start || !end || end <= start) {
-        SporkLog(@"Error: Invalid job list.");
-        return;
-    }
-
-    void* script_context = NULL;
-    for (uintptr_t ptr = start; ptr < end; ptr += 0x10) {
-        void* j = NULL;
-        if (!safe_read((void*)ptr, &j, 8) || !j) continue;
-        uintptr_t stripped_j = STRIP_PAC(j);
-        if (safe_read((char*)stripped_j + OFFSET_JOB_SCRIPT_CTX, &script_context, 8) && script_context) {
-            break;
-        }
-    }
-
+    // Get ScriptContext using the safe, reliable offset
+    get_scriptcontext_t get_sc = (get_scriptcontext_t)(base + OFFSET_GET_SCRIPTCONTEXT);
+    void* script_context = get_sc();
+    
     if (!script_context) {
-        SporkLog(@"Error: ScriptContext not found.");
+        SporkLog(@"Error: get_scriptcontext returned NULL.");
         return;
     }
+    SporkLog(@"Got ScriptContext: %p", script_context);
 
-    // Call get_global_state using your exact offset
-    get_global_state_t get_global_state = (get_global_state_t)(base + OFFSET_GET_GLOBAL_STATE);
-    void* global_state = get_global_state(script_context);
-
+    // Scan for global_State
+    void* global_state = find_global_state(script_context);
     if (global_state) {
         safe_read((char*)global_state + OFFSET_MAINTHREAD, &g_live_L, 8);
         if (g_live_L) {
@@ -61,6 +70,6 @@ void SetupHooks(void) {
             SporkLog(@"Error: mainthread was NULL.");
         }
     } else {
-        SporkLog(@"Error: get_global_state returned NULL.");
+        SporkLog(@"Error: Could not find global_State in ScriptContext or DataModel.");
     }
 }
