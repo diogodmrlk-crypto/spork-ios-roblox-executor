@@ -5,10 +5,10 @@ INSTALL_TARGET_PROCESSES = Roblox
 include $(THEOS)/makefiles/common.mk
 
 TWEAK_NAME = Spork
-# If your files are in a src folder, change this to src/Tweak.xm src/SporkUI.mm etc.
-Spork_FILES = Tweak.xm SporkUI.mm memory.cpp hooks.cpp exploit.cpp
 
-# Added -I. and -I./src to help the compiler find the headers
+# Updated hooks.mm and exploit.mm
+Spork_FILES = Tweak.xm SporkUI.mm memory.cpp hooks.mm exploit.mm
+
 Spork_OBJCFLAGS = -fobjc-arc -I. -I./src
 Spork_OBJCCFLAGS = -fobjc-arc -I. -I./src
 Spork_CFLAGS = -fobjc-arc -I. -I./src
