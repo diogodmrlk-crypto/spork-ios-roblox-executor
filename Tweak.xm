@@ -2,6 +2,10 @@
 #import "SporkUI.h"
 #import "hooks.hpp"
 
+// Defined here so SporkUI.mm can link to them
+bool g_is_injected = true;
+int g_execution_method = 1;
+
 // UI Passing Window
 @interface PassThroughWindow : UIWindow
 @property (nonatomic, weak) UIView *interactableView1;
