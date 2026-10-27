@@ -11,6 +11,8 @@
 
 #define OFFSET_GET_GLOBAL_STATE   0x19ce768
 
+// Lua Functions
+#define OFFSET_LUA_GETTOP         0x448e048
 #define OFFSET_LUAU_LOAD          0x44bc110
 #define OFFSET_LUA_PCALL          0x4490fec
 #define OFFSET_LUA_NEWTHREAD      0x448df3c
