@@ -12,4 +12,7 @@ Spork_OBJCFLAGS = -fobjc-arc -I. -I./src
 Spork_OBJCCFLAGS = -fobjc-arc -I. -I./src
 Spork_CFLAGS = -fobjc-arc -I. -I./src
 
+# Use CydiaSubstrate for static linking
+Spork_LIBRARIES = CydiaSubstrate
+
 include $(THEOS_MAKE_PATH)/tweak.mk
