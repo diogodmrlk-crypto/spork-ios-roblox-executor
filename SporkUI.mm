@@ -2,7 +2,9 @@
 #import "exploit.hpp"
 #import "hooks.hpp"
 
+// These are defined in Tweak.xm, so we declare them here to link properly
 extern void* g_live_L;
+extern int g_execution_method;
 
 // --- Custom Button for Squish Effect ---
 @interface SporkButton : UIButton
