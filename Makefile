@@ -12,6 +12,4 @@ Spork_OBJCFLAGS = -fobjc-arc -I. -I./src
 Spork_OBJCCFLAGS = -fobjc-arc -I. -I./src
 Spork_CFLAGS = -fobjc-arc -I. -I./src
 
-Spork_LIBRARIES = substrate
-
 include $(THEOS_MAKE_PATH)/tweak.mk
