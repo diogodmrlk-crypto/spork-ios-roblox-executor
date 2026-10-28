@@ -121,7 +121,7 @@ extern int g_execution_method;
 
     UILabel *title = [[UILabel alloc] init];
     title.translatesAutoresizingMaskIntoConstraints = NO;
-    title.text = @"Spork";
+    title.text = @"PURPOU CHEATS";
     title.textColor = [UIColor whiteColor];
     title.font = [UIFont boldSystemFontOfSize:16];
     [self.topBar addSubview:title];
@@ -309,7 +309,7 @@ extern int g_execution_method;
     
     UILabel *title = [[UILabel alloc] init];
     title.translatesAutoresizingMaskIntoConstraints = NO;
-    title.text = @"Executor Status & Diagnostics";
+    title.text = @"PURPOU DEV";
     title.textColor = [UIColor whiteColor];
     title.font = [UIFont boldSystemFontOfSize:16];
     [self.homeTabView addSubview:title];
