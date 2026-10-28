@@ -1,4 +1,3 @@
-#include "memory.hpp"
 #include "config.hpp"
 #include <mach-o/dyld.h>
 #include <string.h>
@@ -19,13 +18,8 @@ uintptr_t get_robloxlib_base(void) {
     for (uint32_t i = 0; i < count; i++) {
         const char *name = _dyld_get_image_name(i);
         if (name && strstr(name, "RobloxLib")) {
-            // O slide é o valor que deve ser somado ao endereço de link para obter o endereço de execução
+            // Soma o slide do ASLR para garantir que os offsets funcionem
             uintptr_t slide = _dyld_get_image_vmaddr_slide(i);
-            
-            // O cabeçalho Mach-O está no início do dylib
-            // A base de carregamento é o endereço do cabeçalho menos o slide
-            // No entanto, a maneira mais simples é usar o endereço do cabeçalho e ajustar os offsets
-            // Se os seus offsets são relativos ao slide, use:
             return (uintptr_t)_dyld_get_image_header(i) + slide;
         }
     }
