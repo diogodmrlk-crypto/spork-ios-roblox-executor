@@ -1,6 +1,8 @@
 // config.hpp
 #pragma once
 
+#include <cstdint>
+
 // RVAs do RobloxLib (do repositório shiedless/roblox-ios-luau-vm-notes)
 // Válidos para a build de setembro/2026. Atualizações movem esses valores.
 namespace Offsets {
