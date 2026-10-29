@@ -1,12 +1,18 @@
 TARGET = iphone:clang:latest:14.0
 ARCHS = arm64 arm64e
+INSTALL_TARGET_PROCESSES = SpringBoard
 
 TWEAK_NAME = Spork
-Spork_FILES = Tweak.xm SporkUI.mm exploit.mm hooks.mm memory.cpp execution.cpp
 
-# Adicionado Security (usado pelo Luau) e a pasta do Luau para compilar o luau_compile
+# Compila os arquivos do projeto E os arquivos do Luau que estão nas pastas na raiz
+Spork_FILES = Tweak.xm SporkUI.mm exploit.mm hooks.mm memory.cpp execution.cpp
+Spork_FILES += $(wildcard VM/src/*.cpp) $(wildcard Compiler/src/*.cpp)
+
+# Aponta os includes para as pastas na raiz
 Spork_CFLAGS = -fobjc-arc -std=c++17 \
-               -I$(THEOS_PROJECT_DIR)/luau \
+               -I$(THEOS_PROJECT_DIR)/VM/include \
+               -I$(THEOS_PROJECT_DIR)/Compiler/include \
+               -I$(THEOS_PROJECT_DIR)/Common/include \
                -I$(THEOS_PROJECT_DIR)
 
 # Linka o Dobby da pasta lib
