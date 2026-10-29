@@ -2,19 +2,16 @@
 #pragma once
 
 #include <string>
-#include <cstddef>
 
-// Luau headers — certifique-se de que estes estão no include path do projeto.
-// Se o teu projeto usa um vendor específico, ajusta os caminhos.
-extern "C" {
-#include "lua.h"
-#include "luacode.h"
-}
-
-// Executa um script Luau no state dado.
+// Recebe void* (que é lua_State*) pra não forçar o include de lua.h
+// em todo arquivo que inclui este header (SporkUI.mm, hooks.mm).
+// O cast pra lua_State* é feito dentro do execution.cpp.
+//
 // Retorna:
 //   0  -> sucesso
 //  -1  -> falha na compilação (luau_compile retornou nullptr)
 //  -2  -> falha no load (luau_load retornou != 0)
-//  >0  -> erro de runtime retornado por lua_pcall (índice na stack)
-int ExecuteScript(lua_State* L, const std::string& Source);
+//  -4  -> RobloxLib base não encontrada
+//  -5  -> L (lua_State) é nulo
+//  >0  -> erro de runtime retornado por lua_pcall
+int ExecuteScript(void* L, const std::string& Source);
