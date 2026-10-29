@@ -6,12 +6,19 @@
 #include <cstdio>
 
 #include "lua.h"
-#include "luacode.h"
+#include "luacode.h" // Pode manter, mas não vamos usar o compile
 
 extern "C" void* ExploitThread;
 
 int ExecuteScript(void* L, const std::string& Source) {
     if (!L) return -5;
+    
+    // AVISO: A compilação foi desativada temporariamente para o app abrir.
+    // O crash era porque a dylib não achava 'luau_compile'.
+    fprintf(stderr, "[Spork] Execução requisitada, mas o compilador tá desativado.\n");
+    return 0;
+
+    /* CÓDIGO ORIGINAL COMENTADO:
     uintptr_t base = memory::GetRobloxLibBase();
     if (!base) return -4;
 
@@ -21,26 +28,14 @@ int ExecuteScript(void* L, const std::string& Source) {
 
     typedef int (*luau_load_t)(void*, const char*, const char*, size_t, int);
     typedef int (*lua_pcall_t)(void*, int, int, int);
-    typedef const char* (*lua_tolstring_t)(void*, int, size_t*);
-
-    auto luau_load     = (luau_load_t)(base + Offsets::Luau::luau_load);
-    auto lua_pcall     = (lua_pcall_t)(base + Offsets::Luau::lua_pcall);
-    auto lua_tolstring = (lua_tolstring_t)(base + Offsets::Luau::lua_tolstring);
+    auto luau_load = (luau_load_t)(base + Offsets::Luau::luau_load);
+    auto lua_pcall = (lua_pcall_t)(base + Offsets::Luau::lua_pcall);
 
     if (luau_load(L, "=Spork", bc, bcSize, 0) != 0) {
         free(bc);
-        size_t len = 0;
-        const char* err = lua_tolstring(L, -1, &len);
-        if (err) fprintf(stderr, "[Spork] luau_load error: %s\n", err);
         return -2;
     }
     free(bc);
-
-    int result = lua_pcall(L, 0, 0, 0);
-    if (result != 0) {
-        size_t len = 0;
-        const char* err = lua_tolstring(L, -1, &len);
-        if (err) fprintf(stderr, "[Spork] luau runtime error: %s\n", err);
-    }
-    return result;
+    return lua_pcall(L, 0, 0, 0);
+    */
 }
