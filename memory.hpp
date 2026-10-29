@@ -1,6 +1,8 @@
+// memory.hpp
 #pragma once
-#include <stdint.h>
-#include <stdbool.h>
+#include <cstdint>
 
-bool safe_read(void* address, void* buffer, size_t size);
-uintptr_t get_robloxlib_base(void);
+namespace memory {
+    uintptr_t GetRobloxLibBase();
+    uintptr_t GetModuleBase(const char* name);
+}
