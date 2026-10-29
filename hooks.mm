@@ -1,35 +1,56 @@
 // hooks.mm
-#import "hooks.hpp"
-#import "exploit.hpp"
+#import <Foundation/Foundation.h>
+#include "hooks.hpp"
+#include "exploit.hpp"
+#include "execution.hpp"
+#include "config.hpp"
+#include "memory.hpp"
 
-// Callback executado a cada frame
-static int ScriptsHandler(lua_State* L) {
-    if (!ExecutionRequests.empty()) {
-        std::string Script = ExecutionRequests.front();
+// ============================================================
+// Ponteiro original do gc_step (preenchido pelo Dobby)
+// Assinatura: uint64_t(lua_State* L, int idx)
+// ============================================================
+typedef uint64_t (*gc_step_t)(void*, int);
+static gc_step_t g_orig_gc_step = nullptr;
+
+// ============================================================
+// HookedGcStep: dispara a cada tick do interpretador.
+// É o ponto seguro para tocar no lua_State — sempre roda na vm thread.
+// ============================================================
+static uint64_t HookedGcStep(void* L, int idx) {
+    if (ExploitThread && !ExecutionRequests.empty()) {
+        std::string script = ExecutionRequests.front();
         ExecutionRequests.erase(ExecutionRequests.begin());
-        
-        // Compila e executa
-        ExecuteScript(ExploitThread, Script);
+
+        int r = ExecuteScript(ExploitThread, script);
+        NSLog(@"[Spork] executed script, result=%d", r);
     }
-    return 0;
+    return g_orig_gc_step(L, idx);
 }
 
-// Conecta o handler ao RenderStepped
-void SetupExecution(lua_State* L) {
-    lua_getglobal(L, "game");
-    lua_getfield(L, -1, "GetService");
-    lua_pushvalue(L, -2);
-    lua_pushstring(L, "RunService");
-    lua_pcall(L, 2, 1, 0);
-    
-    lua_getfield(L, -1, "RenderStepped");
-    lua_pushcclosure(L, ScriptsHandler, 0, nullptr);
-    lua_pcall(L, 1, 1, 0);
-    
-    lua_pop(L, 2);
-}
+// ============================================================
+// SetupExecution: hooka gc_step
+// ============================================================
+void SetupExecution(void* L) {
+    (void)L; // não usado; usamos ExploitThread (capturado no HookedLuauLoad)
 
-// Chamado pela UI quando o botão Execute é clicado
-void RequestExecution(const std::string& Script) {
-    ExecutionRequests.push_back(Script);
+    uintptr_t base = memory::GetRobloxLibBase();
+    if (!base) {
+        NSLog(@"[Spork] SetupExecution: RobloxLib not found");
+        return;
+    }
+
+    uintptr_t gcStepAddr = base + Offsets::Luau::gc_step;
+    NSLog(@"[Spork] gc_step @ 0x%lx", gcStepAddr);
+
+    extern void* DobbyHook(void* address, void* replace, void** origin);
+    void* orig = nullptr;
+    DobbyHook((void*)gcStepAddr, (void*)HookedGcStep, &orig);
+    g_orig_gc_step = (gc_step_t)orig;
+
+    if (!g_orig_gc_step) {
+        NSLog(@"[Spork] DobbyHook failed for gc_step");
+        return;
+    }
+    NSLog(@"[Spork] gc_step hooked");
 }
