@@ -1,50 +1,11 @@
-// exploit.mm
-#import <Foundation/Foundation.h>
-#include "exploit.hpp"
-#include "config.hpp"
-#include "memory.hpp"
-#include <dlfcn.h>
+// Tweak.xm
+#import <UIKit/UIKit.h>
+#import "exploit.hpp"
+#import "hooks.hpp"
 
-void* ExploitThread = nullptr;
-std::vector<std::string> ExecutionRequests;
-static uintptr_t g_robloxLibBase = 0;
-
-typedef int (*luau_load_t)(void*, const char*, const char*, size_t, int);
-static luau_load_t g_orig_luau_load = nullptr;
-
-static int HookedLuauLoad(void* L, const char* chunk, const char* data, size_t len, int env) {
-    if (!ExploitThread && L) {
-        typedef void* (*lua_newthread_t)(void*);
-        auto lua_newthread = (lua_newthread_t)(g_robloxLibBase + Offsets::Luau::lua_newthread);
-        ExploitThread = lua_newthread(L);
-        NSLog(@"[Spork] captured lua_State: %p -> thread: %p", L, ExploitThread);
-    }
-    return g_orig_luau_load(L, chunk, data, len, env);
-}
-
-void SetupExploit() {
-    g_robloxLibBase = memory::GetRobloxLibBase();
-    if (!g_robloxLibBase) {
-        NSLog(@"[Spork] RobloxLib not found — abort");
-        return;
-    }
-    NSLog(@"[Spork] RobloxLib base: 0x%lx", g_robloxLibBase);
-
-    uintptr_t luauLoadAddr = g_robloxLibBase + Offsets::Luau::luau_load;
-    
-    extern void* DobbyHook(void* address, void* replace, void** origin);
-    void* orig = nullptr;
-    DobbyHook((void*)luauLoadAddr, (void*)HookedLuauLoad, &orig);
-    g_orig_luau_load = (luau_load_t)orig;
-
-    if (!g_orig_luau_load) {
-        NSLog(@"[Spork] DobbyHook failed for luau_load");
-        return;
-    }
-    NSLog(@"[Spork] luau_load hooked");
-}
-
-void RequestExecution(const std::string& Script) {
-    ExecutionRequests.push_back(Script);
-    NSLog(@"[Spork] enqueued script (%lu bytes), thread=%p", Script.size(), ExploitThread);
+%ctor {
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(5.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        SetupExploit();
+        SetupExecution(nullptr);
+    });
 }
