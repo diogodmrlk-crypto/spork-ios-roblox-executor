@@ -1,46 +1,20 @@
+// config.hpp
 #pragma once
-#include <stdint.h>
 
-// ==========================================
-// OFFSETS (Roblox 2.744.0.1077)
-// ==========================================
-// ATENÇÃO: Verifique se esses offsets estão atualizados para a versão atual do Roblox.
-// Se o Roblox atualizar, os offsets podem mudar. Use um dumper para atualizá-los.
-
-// ------------------------------------------
-// TASK SCHEDULER (Jobs)
-// ------------------------------------------
-#define OFFSET_TASKSCHEDULER      0x6a6d7c0
-#define OFFSET_TS_JOBS_START      0xd0
-#define OFFSET_TS_JOBS_END        0xd8
-#define OFFSET_JOB_SCRIPT_CTX     0x1b0
-
-// ------------------------------------------
-// GLOBAL STATE
-// ------------------------------------------
-#define OFFSET_GET_GLOBAL_STATE   0x19ce768
-
-// ------------------------------------------
-// LUA FUNCTIONS
-// ------------------------------------------
-#define OFFSET_LUA_GETTOP         0x448e048
-#define OFFSET_LUAU_LOAD          0x44bc110
-#define OFFSET_LUA_PCALL          0x4490fec
-#define OFFSET_LUA_NEWTHREAD      0x448df3c
-#define OFFSET_LUAL_SANDBOXTHREAD 0x1a12ad4
-#define OFFSET_LUA_TOSTRING       0x448f620 // Adicionado para suporte a erros de script
-
-// ------------------------------------------
-// STRUCTURES (lua_State)
-// ------------------------------------------
-#define OFFSET_PARENT             0x60
-#define OFFSET_MAINTHREAD         0x1a0
-#define OFFSET_LUA_STATE_GLOBAL   0x78
-#define OFFSET_LUA_STATE_TT       0x2
-#define OFFSET_LUA_STATE_TOP      0x70 // Necessário para my_lua_gettop
-#define OFFSET_LUA_STATE_BASE     0x58 // Necessário para my_lua_gettop
-
-// ------------------------------------------
-// MACROS
-// ------------------------------------------
-#define STRIP_PAC(ptr) ((uintptr_t)(ptr) & 0x0000000FFFFFFFFF)
+// RVAs do RobloxLib (do repositório shiedless/roblox-ios-luau-vm-notes)
+// Válidos para a build de setembro/2026. Atualizações movem esses valores.
+namespace Offsets {
+    namespace Luau {
+        constexpr uintptr_t luau_load     = 0x410f3b0;
+        constexpr uintptr_t lua_pcall     = 0x40e4cc0;
+        constexpr uintptr_t lua_newthread = 0x40e1e50;
+        constexpr uintptr_t lua_tolstring = 0x40e2b44;
+        constexpr uintptr_t gc_step       = 0x40f30fc;
+    }
+    namespace LuaState {
+        constexpr uintptr_t ExtraSpace = 0x28;  // userdata
+        constexpr uintptr_t CallInfo   = 0x40;
+        constexpr uintptr_t StackTop   = 0x58;
+        constexpr uintptr_t Identity   = 0x90;  // dentro do ExtraSpace
+    }
+}
