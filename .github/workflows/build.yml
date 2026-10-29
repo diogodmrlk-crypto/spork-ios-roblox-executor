@@ -1,29 +1,31 @@
 name: Build Spork iOS Dylib
-on: [push, pull_request]
+on: [push, pull_request, workflow_dispatch]
+
 jobs:
   build:
-    runs-on: macos-latest
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ldid make git curl unzip
 
       - name: Setup Theos
         run: |
           git clone --recursive https://github.com/theos/theos.git $HOME/theos
           echo "THEOS=$HOME/theos" >> $GITHUB_ENV
 
-      - name: Install ldid
-        run: brew install ldid
-
       - name: Build Tweak
         run: |
           export THEOS=$HOME/theos
-          export TARGET_CODESIGN=$(which ldid)
-          make package FINALPACKAGE=1
+          export TARGET_CODESIGN=ldid
+          make FINALPACKAGE=1
 
       - name: Upload Dylib
         uses: actions/upload-artifact@v4
         with:
-          name: Spork-UI-Dylib
-          path: |
-            .theos/obj/**/*.dylib
+          name: Spork-Dylib
+          path: .theos/obj/arm64/Spork.dylib
