@@ -1,5 +1,5 @@
+// hooks.hpp
 #pragma once
-#include <stdbool.h>
 
-extern void* g_live_L;
-void SetupHooks(void);
+// L é void* (lua_State*), não usamos o tipo direto pra não depender de lua.h
+void SetupExecution(void* L);
