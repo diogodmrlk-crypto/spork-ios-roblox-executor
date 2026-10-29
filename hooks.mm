@@ -10,7 +10,7 @@ typedef uint64_t (*gc_step_t)(void*, int);
 static gc_step_t g_orig_gc_step = nullptr;
 
 static uint64_t HookedGcStep(void* L, int idx) {
-    // Se ainda não temos o estado, captura no gc_step
+    // Se por algum motivo o HookedLuauLoad não pegou, pegamos no gc_step
     if (!ExploitThread && L) {
         typedef void* (*lua_newthread_t)(void*);
         auto lua_newthread = (lua_newthread_t)(memory::GetRobloxLibBase() + Offsets::Luau::lua_newthread);
@@ -18,7 +18,6 @@ static uint64_t HookedGcStep(void* L, int idx) {
         NSLog(@"[Spork] captured lua_State via gc_step: %p", ExploitThread);
     }
 
-    // Executa a fila
     if (ExploitThread && !ExecutionRequests.empty()) {
         std::string script = ExecutionRequests.front();
         ExecutionRequests.erase(ExecutionRequests.begin());
@@ -30,10 +29,7 @@ static uint64_t HookedGcStep(void* L, int idx) {
 void SetupExecution(void* L) {
     (void)L;
     uintptr_t base = memory::GetRobloxLibBase();
-    if (!base) {
-        NSLog(@"[Spork] SetupExecution: RobloxLib not found");
-        return;
-    }
+    if (!base) return;
 
     uintptr_t gcStepAddr = base + Offsets::Luau::gc_step;
     
@@ -42,9 +38,5 @@ void SetupExecution(void* L) {
     DobbyHook((void*)gcStepAddr, (void*)HookedGcStep, &orig);
     g_orig_gc_step = (gc_step_t)orig;
 
-    if (g_orig_gc_step) {
-        NSLog(@"[Spork] gc_step hooked");
-    } else {
-        NSLog(@"[Spork] DobbyHook failed for gc_step");
-    }
+    if (g_orig_gc_step) NSLog(@"[Spork] gc_step hooked");
 }
