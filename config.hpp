@@ -3,8 +3,6 @@
 
 #include <cstdint>
 
-// RVAs do RobloxLib (do repositório shiedless/roblox-ios-luau-vm-notes)
-// Válidos para a build de setembro/2026. Atualizações movem esses valores.
 namespace Offsets {
     namespace Luau {
         constexpr uintptr_t luau_load     = 0x410f3b0;
@@ -14,9 +12,14 @@ namespace Offsets {
         constexpr uintptr_t gc_step       = 0x40f30fc;
     }
     namespace LuaState {
-        constexpr uintptr_t ExtraSpace = 0x28;  // userdata
+        constexpr uintptr_t ExtraSpace = 0x28;
         constexpr uintptr_t CallInfo   = 0x40;
         constexpr uintptr_t StackTop   = 0x58;
-        constexpr uintptr_t Identity   = 0x90;  // dentro do ExtraSpace
+        constexpr uintptr_t Identity   = 0x90; 
+    }
+    namespace TaskScheduler {
+        constexpr uintptr_t Pointer = 0x7A3F4A0; // Offset do TaskScheduler do Roblox iOS
+        constexpr uintptr_t JobsStart = 0x1B0;
+        constexpr uintptr_t JobsEnd = 0x1B8;
     }
 }
