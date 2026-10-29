@@ -10,7 +10,7 @@ typedef uint64_t (*gc_step_t)(void*, int);
 static gc_step_t g_orig_gc_step = nullptr;
 
 static uint64_t HookedGcStep(void* L, int idx) {
-    // Verifica se o thread e a fila existem antes de tentar executar
+    // Drena a fila de scripts, um por tick
     if (ExploitThread && !ExecutionRequests.empty()) {
         std::string script = ExecutionRequests.front();
         ExecutionRequests.erase(ExecutionRequests.begin());
@@ -22,7 +22,7 @@ static uint64_t HookedGcStep(void* L, int idx) {
 }
 
 void SetupExecution(void* L) {
-    (void)L;
+    (void)L; // não usado
 
     uintptr_t base = memory::GetRobloxLibBase();
     if (!base) {
