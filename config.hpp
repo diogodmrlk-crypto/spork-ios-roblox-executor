@@ -17,9 +17,4 @@ namespace Offsets {
         constexpr uintptr_t StackTop   = 0x58;
         constexpr uintptr_t Identity   = 0x90; 
     }
-    namespace TaskScheduler {
-        constexpr uintptr_t Pointer = 0x7A3F4A0; // Offset do TaskScheduler do Roblox iOS
-        constexpr uintptr_t JobsStart = 0x1B0;
-        constexpr uintptr_t JobsEnd = 0x1B8;
-    }
 }
