@@ -9,10 +9,8 @@ Spork_FILES += $(wildcard VM/src/*.cpp) $(wildcard Compiler/src/*.cpp) $(wildcar
 
 Spork_CFLAGS = -fobjc-arc -std=c++17 \
                -I$(THEOS_PROJECT_DIR)/VM/include \
-               -I$(THEOS_PROJECT_DIR)/VM/include/Luau \
                -I$(THEOS_PROJECT_DIR)/Compiler/include \
                -I$(THEOS_PROJECT_DIR)/Common/include \
-               -I$(THEOS_PROJECT_DIR)/Common/include/Luau \
                -I$(THEOS_PROJECT_DIR)/Ast/include \
                -I$(THEOS_PROJECT_DIR)
 
